@@ -1,0 +1,1 @@
+Mobile screenshot: Botão "Mapa" aparece no canto inferior direito com ícone Maximize2. O painel lateral ocupa a tela toda normalmente. O botão flutuante está visível e funcional. Quando clicado, o painel lateral fica hidden e o mapa expande para tela cheia com fixed inset-0. O botão "Fechar mapa" aparece no topo direito para retornar.

@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.MapaCoordenadas" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#06b6d4</item>
+        <item name="android:navigationBarColor">#0f172a</item>
+        <item name="android:statusBarColor">#0f172a</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

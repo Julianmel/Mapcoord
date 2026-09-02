@@ -1,0 +1,1 @@
+Screenshot final OK: Formato com timestamp visível, campo Observação presente com placeholder, botão Capturar GPS em destaque verde, captura contínua, textarea com placeholder do formato, slider de raio, botões Carregar/Limpar/Exportar/Configurar Cores. Tudo sem erros. Sem instruções antigas. Sem "Exemplo".
