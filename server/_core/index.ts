@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import path from "path";
 import { serveStatic, setupVite } from "./vite";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -44,6 +45,15 @@ async function startServer() {
       createContext,
     })
   );
+
+  // Explicit route to download APK with official Android MIME type and Content-Disposition
+  app.get("/app-debug.apk", (_req, res) => {
+    const apkPath = path.resolve(import.meta.dirname, "../../android/app/build/outputs/apk/debug/app-debug.apk");
+    res.setHeader("Content-Type", "application/vnd.android.package-archive");
+    res.setHeader("Content-Disposition", 'attachment; filename="app-debug.apk"');
+    res.sendFile(apkPath);
+  });
+
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
