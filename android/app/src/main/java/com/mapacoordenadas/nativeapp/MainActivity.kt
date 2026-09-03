@@ -27,8 +27,8 @@ import org.json.JSONObject
 class MainActivity : Activity() {
     private lateinit var webView: WebView
     private val permissionRequestCode = 721
-    private val appUrl = "https://mapacoordenadas.manus.space"
-    private val fallbackAppUrl = "https://mapacoord-cyww7zd8.manus.space"
+    private val appUrl = "https://julianmel.github.io/Mapcoord/"
+    private val fallbackAppUrl = "https://mapacoordenadas.manus.space"
     private var pendingIntervalSeconds: Int? = null
     private var pendingStationaryWaitSeconds: Int? = null
     private var triedFallbackUrl = false
