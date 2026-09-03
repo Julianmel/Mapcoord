@@ -803,12 +803,21 @@ export default function Home() {
       c.marker.remove();
     });
 
+    prevCoordsCountRef.current = parsed.length;
     if (mapRef.current) {
       renderizarNoMapa(parsed, mapRef.current);
     }
   }, [inputText, parseCoordenadas, activeCircles]);
 
-  const renderizarNoMapa = useCallback((coordsList: ParsedCoord[], map: L.Map) => {
+  const prevCoordsCountRef = useRef(0);
+
+  const renderizarNoMapa = useCallback((coordsList: ParsedCoord[], map: L.Map, options?: { followLatest?: boolean }) => {
+    // Limpa overlays anteriores
+    activeCirclesRef.current.forEach((c) => {
+      c.circle.remove();
+      c.marker.remove();
+    });
+
     const newCircles: CircleRef[] = [];
     const latLngs: [number, number][] = [];
 
@@ -828,7 +837,10 @@ export default function Home() {
 
       // Marker clássica com ícone SVG — anchor no centro
       const icon = createMarkerIcon(index, colors);
-      const marker = L.marker(center, { icon }).addTo(map);
+      const marker = L.marker(center, { icon });
+      if (!showLine) {
+        marker.addTo(map);
+      }
 
       const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 4px; color: #1e293b;">
         <strong style="color: #0284c7;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 12px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
@@ -844,12 +856,27 @@ export default function Home() {
 
     setActiveCircles(newCircles);
 
-    if (coordsList.length > 1) {
-      map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
-    } else if (coordsList.length === 1) {
-      map.setView([coordsList[0].lat, coordsList[0].lng], 14);
+    // Se a linha conectando os pontos estiver ativa, atualiza seus pontos
+    if (showLine && polylineRef.current) {
+      polylineRef.current.setLatLngs(latLngs);
     }
-  }, [radius, colors]);
+
+    if (coordsList.length === 0) return;
+
+    const latest = coordsList[coordsList.length - 1];
+
+    if (options?.followLatest) {
+      // Mantém o nível de zoom atual selecionado pelo usuário e desloca o centro para a coordenada mais recente
+      map.panTo([latest.lat, latest.lng], { animate: true });
+    } else {
+      // Ajuste inicial ou manual de enquadramento
+      if (coordsList.length > 1) {
+        map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
+      } else if (coordsList.length === 1) {
+        map.setView([latest.lat, latest.lng], 16);
+      }
+    }
+  }, [radius, colors, showLine]);
 
   // Auto-save e auto-update do mapa
   // Refs para evitar re-renders desnecessários no auto-save
@@ -865,7 +892,11 @@ export default function Home() {
     if (!autoLoadEnabled || !dataLoaded) return;
     const parsed = parseCoordenadas(inputText);
     setCoords(parsed);
-    if (mapRef.current) renderizarNoMapa(parsed, mapRef.current);
+    const isNewPointAdded = parsed.length > prevCoordsCountRef.current && prevCoordsCountRef.current > 0;
+    prevCoordsCountRef.current = parsed.length;
+    if (mapRef.current) {
+      renderizarNoMapa(parsed, mapRef.current, { followLatest: isNewPointAdded });
+    }
   }, [autoLoadEnabled, dataLoaded, inputText, parseCoordenadas, renderizarNoMapa]);
 
 

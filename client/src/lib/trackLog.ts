@@ -42,7 +42,8 @@ export function ensureLogHeader(text: string): string {
 
 export function appendLogRecord(existing: string, record: string): string {
   const base = ensureLogHeader(existing).trimEnd();
-  return `${base}${base.endsWith(";") ? "" : ";"}${LOG_RECORD_SEPARATOR}; ${record}${LOG_RECORD_SEPARATOR}`;
+  const cleanedRecord = record.trim().replace(/^;\s*/, "").replace(/;+$/, "").trim();
+  return `${base}${LOG_RECORD_SEPARATOR}; ${cleanedRecord}${LOG_RECORD_SEPARATOR}`;
 }
 
 export function formatGpsMetadata(data: {
