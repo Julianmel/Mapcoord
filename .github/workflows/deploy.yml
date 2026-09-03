@@ -42,6 +42,9 @@ jobs:
       - name: Build static site
         run: pnpm run build
 
+      - name: Copy index.html to 404.html for SPA support
+        run: cp dist/public/index.html dist/public/404.html
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
