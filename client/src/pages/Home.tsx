@@ -14,6 +14,7 @@
 import { useCallback, useRef, useState, useMemo, useEffect } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { MapView } from "@/components/Map";
+import L from "leaflet";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
@@ -41,10 +42,9 @@ interface ParsedCoord {
 }
 
 interface CircleRef {
-  circle: google.maps.Circle;
-  marker: google.maps.Marker;
-  center: google.maps.LatLng;
-  infoWindow: google.maps.InfoWindow;
+  circle: L.Circle;
+  marker: L.Marker;
+  center: [number, number];
 }
 
 interface ColorConfig {
@@ -243,31 +243,30 @@ function saveData(text: string) {
 
 
 /**
- * Cria o SVG data URI para o ícone da Marker clássica.
- * O ícone é um círculo com as cores configuradas e número centralizado.
+ * Cria o ícone DivIcon Leaflet para o marcador numérico.
+ * O ícone é um círculo SVG com as cores configuradas e número centralizado.
  */
 function createMarkerIcon(
   index: number,
   colors: ColorConfig,
-): { url: string; size: google.maps.Size; anchor: google.maps.Point } {
-  const size = 14;
+): L.DivIcon {
+  const size = 18;
   const half = size / 2;
   const r = half - 1;
 
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
       <circle cx="${half}" cy="${half}" r="${r}" fill="${colors.numberCircleColor}" stroke="${colors.numberCircleColor}" stroke-width="1"/>
-      <text x="${half}" y="${half + 2}" text-anchor="middle" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="5" font-weight="700">${index + 1}</text>
+      <text x="${half}" y="${half}" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="8" font-weight="700">${index + 1}</text>
     </svg>
   `.trim();
 
-  const encoded = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-
-  return {
-    url: encoded,
-    size: new google.maps.Size(size, size),
-    anchor: new google.maps.Point(half, half),
-  };
+  return L.divIcon({
+    className: "custom-map-marker",
+    html: svg,
+    iconSize: [size, size],
+    iconAnchor: [half, half],
+  });
 }
 
 export default function Home() {
@@ -329,7 +328,7 @@ export default function Home() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [autoLoadEnabled, setAutoLoadEnabled] = useState(false);
   const [showLine, setShowLine] = useState(false);
-  const polylineRef = useRef<google.maps.Polyline | null>(null);
+  const polylineRef = useRef<L.Polyline | null>(null);
   const [showTrackAnalysis, setShowTrackAnalysis] = useState(false);
   const [analysisMessages, setAnalysisMessages] = useState<Message[]>([]);
   const [nativeDiagnostics, setNativeDiagnostics] = useState<NativeDiagnostics | null>(null);
@@ -613,7 +612,7 @@ export default function Home() {
     acquireWakeLock();
   }, [continuousCapture, stationaryCapture]);
 
-  const mapRef = useRef<google.maps.Map | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
 
 
 
@@ -800,72 +799,55 @@ export default function Home() {
 
     // Limpa overlays anteriores
     activeCircles.forEach((c) => {
-      c.circle.setMap(null);
-      c.marker.setMap(null);
+      c.circle.remove();
+      c.marker.remove();
     });
 
-    if (mapRef.current && window.google) {
+    if (mapRef.current) {
       renderizarNoMapa(parsed, mapRef.current);
     }
   }, [inputText, parseCoordenadas, activeCircles]);
 
-  const renderizarNoMapa = useCallback((coordsList: ParsedCoord[], map: google.maps.Map) => {
+  const renderizarNoMapa = useCallback((coordsList: ParsedCoord[], map: L.Map) => {
     const newCircles: CircleRef[] = [];
-    const bounds = new google.maps.LatLngBounds();
+    const latLngs: [number, number][] = [];
 
     coordsList.forEach((coord, index) => {
-      const center = new google.maps.LatLng(coord.lat, coord.lng);
+      const center: [number, number] = [coord.lat, coord.lng];
+      latLngs.push(center);
 
       // Círculo com cores configuradas
-      const circle = new google.maps.Circle({
-        map,
-        center,
+      const circle = L.circle(center, {
         radius,
+        color: colors.circleBorderColor,
         fillColor: colors.circleFillColor,
         fillOpacity: 0.3,
-        strokeColor: colors.circleBorderColor,
-        strokeOpacity: 1.0,
-        strokeWeight: 2,
-        clickable: true,
-      });
+        weight: 2,
+        opacity: 1.0,
+      }).addTo(map);
 
       // Marker clássica com ícone SVG — anchor no centro
       const icon = createMarkerIcon(index, colors);
-      const marker = new google.maps.Marker({
-        map,
-        position: center,
-        icon,
-      });
+      const marker = L.marker(center, { icon }).addTo(map);
 
-      const infoWindow = new google.maps.InfoWindow({
-        content: `<div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 4px;">
-          <strong style="color: #06b6d4;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #22c55e; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #f59e0b; font-size: 12px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
-          Lat: ${coord.lat.toFixed(6)}<br/>
-          Lng: ${coord.lng.toFixed(6)}
-        </div>`,
-      });
+      const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 4px; color: #1e293b;">
+        <strong style="color: #0284c7;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 12px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
+        Lat: ${coord.lat.toFixed(6)}<br/>
+        Lng: ${coord.lng.toFixed(6)}
+      </div>`;
 
-      circle.addListener("click", () => {
-        infoWindow.setPosition(center);
-        infoWindow.open(map);
-      });
+      circle.bindPopup(popupContent);
+      marker.bindPopup(popupContent);
 
-      marker.addListener("click", () => {
-        infoWindow.setPosition(center);
-        infoWindow.open(map);
-      });
-
-      newCircles.push({ circle, marker, center, infoWindow });
-      bounds.extend(center);
+      newCircles.push({ circle, marker, center });
     });
 
     setActiveCircles(newCircles);
 
     if (coordsList.length > 1) {
-      map.fitBounds(bounds);
+      map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
     } else if (coordsList.length === 1) {
-      map.setCenter({ lat: coordsList[0].lat, lng: coordsList[0].lng });
-      map.setZoom(12);
+      map.setView([coordsList[0].lat, coordsList[0].lng], 14);
     }
   }, [radius, colors]);
 
@@ -883,7 +865,7 @@ export default function Home() {
     if (!autoLoadEnabled || !dataLoaded) return;
     const parsed = parseCoordenadas(inputText);
     setCoords(parsed);
-    if (mapRef.current && window.google) renderizarNoMapa(parsed, mapRef.current);
+    if (mapRef.current) renderizarNoMapa(parsed, mapRef.current);
   }, [autoLoadEnabled, dataLoaded, inputText, parseCoordenadas, renderizarNoMapa]);
 
 
@@ -907,28 +889,27 @@ export default function Home() {
     if (showLine) {
       // Remover linha e mostrar markers novamente
       if (polylineRef.current) {
-        polylineRef.current.setMap(null);
+        polylineRef.current.remove();
         polylineRef.current = null;
       }
       activeCircles.forEach((c) => {
-        c.marker.setVisible(true);
+        if (!mapRef.current?.hasLayer(c.marker)) {
+          c.marker.addTo(mapRef.current!);
+        }
       });
       setShowLine(false);
       setStatus({ type: "info", message: "Linha removida. Marcadores visíveis." });
     } else {
       // Criar linha e esconder markers
-      const path = coords.map((c) => new google.maps.LatLng(c.lat, c.lng));
-      polylineRef.current = new google.maps.Polyline({
-        map: mapRef.current,
-        path,
-        geodesic: true,
-        strokeColor: colors.numberCircleColor,
-        strokeOpacity: 0.8,
-        strokeWeight: 3,
-      });
+      const path: [number, number][] = coords.map((c) => [c.lat, c.lng]);
+      polylineRef.current = L.polyline(path, {
+        color: colors.numberCircleColor,
+        opacity: 0.8,
+        weight: 3,
+      }).addTo(mapRef.current);
       // Esconder todos os markers
       activeCircles.forEach((c) => {
-        c.marker.setVisible(false);
+        c.marker.remove();
       });
       setShowLine(true);
       setStatus({ type: "success", message: `Linha traçada conectando ${coords.length} pontos.` });
@@ -1094,7 +1075,7 @@ export default function Home() {
   // 2. Timer de 3s: marca flag "readyToCapture"
   // 3. map.addListener('click'): se readyToCapture, captura lat/lng da API
   // 4. Se soltou antes de 3s: cancela, o click normal é ignorado
-  const handleMapReady = useCallback((map: google.maps.Map) => {
+  const handleMapReady = useCallback((map: L.Map) => {
     mapRef.current = map;
     if (coords.length > 0) {
       renderizarNoMapa(coords, map);
@@ -1121,39 +1102,33 @@ export default function Home() {
       setLongPressProgress(0);
     };
 
-    const mapDiv = map.getDiv();
-    const projectionOverlay = new google.maps.OverlayView();
-    projectionOverlay.onAdd = () => {};
-    projectionOverlay.draw = () => {};
-    projectionOverlay.onRemove = () => {};
-    projectionOverlay.setMap(map);
+    const mapDiv = map.getContainer();
 
     const pointFromPointer = (clientX: number, clientY: number) => {
-      const projection = projectionOverlay.getProjection();
-      if (!projection) return null;
       const rect = mapDiv.getBoundingClientRect();
-      return projection.fromContainerPixelToLatLng(new google.maps.Point(clientX - rect.left, clientY - rect.top));
+      const containerPoint = L.point(clientX - rect.left, clientY - rect.top);
+      return map.containerPointToLatLng(containerPoint);
     };
 
-    const captureMapPoint = (latLng: google.maps.LatLng) => {
-      setMapClickedCoord({ lat: latLng.lat(), lng: latLng.lng() });
+    const captureMapPoint = (latLng: { lat: number; lng: number }) => {
+      setMapClickedCoord({ lat: latLng.lat, lng: latLng.lng });
       setShowObservationModal(true);
-      setStatus({ type: "info", message: `Coordenada capturada: ${latLng.lat().toFixed(6)}, ${latLng.lng().toFixed(6)}` });
+      setStatus({ type: "info", message: `Coordenada capturada: ${latLng.lat.toFixed(6)}, ${latLng.lng.toFixed(6)}` });
       cancelPress();
     };
 
     // Mantém um fallback de clique, mas o long-press principal usa a posição do ponteiro diretamente.
-    const clickListener = map.addListener("click", (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng) return;
-      lastClickLatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
-      if (readyToCapture) captureMapPoint(e.latLng);
-    });
+    const onMapClick = (e: L.LeafletMouseEvent) => {
+      lastClickLatLng = { lat: e.latlng.lat, lng: e.latlng.lng };
+      if (readyToCapture) captureMapPoint(e.latlng);
+    };
+    map.on("click", onMapClick);
 
     // --- DESKTOP: mousedown com timer ---
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
-      if (target.closest('.gm-style-controls, .gm-ui-hover-effect, .gm-bundled-control, .gmnoprint')) return;
+      if (target.closest('.leaflet-control, .leaflet-popup, .custom-map-marker')) return;
 
       isPressing = true;
       cancelled = false;
@@ -1181,7 +1156,7 @@ export default function Home() {
     };
 
     const onMouseUp = () => {
-      // Se soltou antes de 3s, cancela. O click do Google Maps vai disparar
+      // Se soltou antes de 3s, cancela. O click do mapa vai disparar
       // mas readyToCapture será false, então será ignorado.
       if (isPressing && !readyToCapture) cancelPress();
     };
@@ -1197,7 +1172,7 @@ export default function Home() {
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const target = e.target as HTMLElement;
-      if (target.closest('.gm-style-controls, .gm-ui-hover-effect, .gm-bundled-control, .gmnoprint')) return;
+      if (target.closest('.leaflet-control, .leaflet-popup, .custom-map-marker')) return;
 
       isPressing = true;
       cancelled = false;
@@ -1226,7 +1201,7 @@ export default function Home() {
     };
 
     const onTouchEnd = () => {
-      // No mobile, o touchend acontece antes do 'click' do Google Maps
+      // No mobile, o touchend acontece antes do 'click'
       // Se readyToCapture, mantemos o flag para o click handler capturar
       if (isPressing && !readyToCapture) cancelPress();
     };
@@ -1243,8 +1218,7 @@ export default function Home() {
     // Cleanup
     return () => {
       cancelPress();
-      clickListener.remove();
-      projectionOverlay.setMap(null);
+      map.off("click", onMapClick);
       mapDiv.removeEventListener("mousedown", onMouseDown, { capture: true });
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("mouseleave", onMouseLeave);
@@ -1275,8 +1249,8 @@ export default function Home() {
     setStatus({ type: "idle", message: "" });
     sequenceCounterRef.current = 0;
     activeCircles.forEach((c) => {
-      c.circle.setMap(null);
-      c.marker.setMap(null);
+      c.circle.remove();
+      c.marker.remove();
     });
     setActiveCircles([]);
     // Só limpar o localStorage via botão Limpar
@@ -1300,9 +1274,9 @@ export default function Home() {
 
         // Atualiza círculo de raio
         if (colorKey === "circleFillColor") {
-          c.circle.setOptions({ fillColor: color, fillOpacity: 0.3 });
+          c.circle.setStyle({ fillColor: color, fillOpacity: 0.3 });
         } else if (colorKey === "circleBorderColor") {
-          c.circle.setOptions({ strokeColor: color });
+          c.circle.setStyle({ color: color });
         }
       });
     }
@@ -1319,10 +1293,10 @@ export default function Home() {
       activeCircles.forEach((c, index) => {
         const icon = createMarkerIcon(index, DEFAULT_COLORS);
         c.marker.setIcon(icon);
-        c.circle.setOptions({
+        c.circle.setStyle({
           fillColor: DEFAULT_COLORS.circleFillColor,
           fillOpacity: 0.3,
-          strokeColor: DEFAULT_COLORS.circleBorderColor,
+          color: DEFAULT_COLORS.circleBorderColor,
         });
       });
     }
