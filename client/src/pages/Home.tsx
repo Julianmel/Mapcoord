@@ -18,10 +18,10 @@ import L from "leaflet";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { MapPin, Trash2, Navigation, CheckCircle2, XCircle, Palette, RotateCcw, X, Crosshair, Loader2, Play, Square, Download, Maximize2, Minimize2, Save, RefreshCcw, Clock, Route, Sparkles } from "lucide-react";
+import { MapPin, Trash2, Navigation, CheckCircle2, XCircle, Palette, RotateCcw, X, Crosshair, Loader2, Play, Square, Download, Maximize2, Minimize2, Save, RefreshCcw, Clock, Route, Sparkles, Focus } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
 import { AIChatBox, type Message } from "@/components/AIChatBox";
-import { trpc } from "@/lib/trpc";
+import { answerDisplacementQuestion } from "@/lib/trackAnalysis";
 import {
   appendLogRecord,
   distanceMeters,
@@ -249,12 +249,19 @@ function saveData(text: string) {
 function createMarkerIcon(
   index: number,
   colors: ColorConfig,
+  compact = false,
 ): L.DivIcon {
-  const size = 18;
+  const size = compact ? 12 : 18;
   const half = size / 2;
   const r = half - 1;
 
-  const svg = `
+  const svg = compact
+    ? `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <circle cx="${half}" cy="${half}" r="${r}" fill="${colors.numberCircleColor || "#0284c7"}" stroke="#ffffff" stroke-width="1.5"/>
+    </svg>
+  `.trim()
+    : `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
       <circle cx="${half}" cy="${half}" r="${r}" fill="${colors.numberCircleColor}" stroke="${colors.numberCircleColor}" stroke-width="1"/>
       <text x="${half}" y="${half}" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="8" font-weight="700">${index + 1}</text>
@@ -332,10 +339,7 @@ export default function Home() {
   const [showTrackAnalysis, setShowTrackAnalysis] = useState(false);
   const [analysisMessages, setAnalysisMessages] = useState<Message[]>([]);
   const [nativeDiagnostics, setNativeDiagnostics] = useState<NativeDiagnostics | null>(null);
-  const aiAskMutation = trpc.ai.ask.useMutation({
-    onSuccess: ({ answer }) => setAnalysisMessages(previous => [...previous, { role: "assistant", content: answer }]),
-    onError: (error) => setAnalysisMessages(previous => [...previous, { role: "assistant", content: `Não foi possível analisar os dados: ${error.message}` }]),
-  });
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const [mounted, setMounted] = useState(false);
 
@@ -685,17 +689,27 @@ export default function Home() {
     const linhas = texto.split(/\r?\n+/).map((p) => p.trim()).filter(Boolean);
     const resultado: ParsedCoord[] = [];
     linhas.forEach((linha) => {
-      const par = linha.replace(/^;\s*/, "").trim();
+      let par = linha.replace(/^;\s*/, "").replace(/;\s*$/, "").trim();
       if (!par || isLogHeaderLine(par)) return;
-      const tsOnly = par.match(/^\[(\d{14})\]/);
-      const coordMatch = par.match(/,\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)(?:\s*,|\s*$)/);
+
+      const tsMatch = par.match(/^\[(\d{14})\]/);
+      const timestamp = tsMatch ? tsMatch[1] : "";
+      if (tsMatch) {
+        par = par.slice(tsMatch[0].length).trim();
+      }
+
+      // Procura lat e lng (dois floats válidos separados por vírgula, ponto-e-vírgula ou tabulação)
+      const coordMatch = par.match(/(-?\d{1,3}\.\d+)\s*[,;\t]\s*(-?\d{1,3}\.\d+)/);
       if (!coordMatch) return;
+
       const lat = Number(coordMatch[1]);
       const lng = Number(coordMatch[2]);
       if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
-      const start = tsOnly ? tsOnly[0].length : 0;
-      const observation = par.slice(start, par.indexOf(coordMatch[0])).replace(/^\s*[,;]\s*/, "").trim();
-      resultado.push({ lat, lng, observation, timestamp: tsOnly?.[1] || "" });
+
+      const matchIndex = par.indexOf(coordMatch[0]);
+      const observation = par.slice(0, matchIndex).replace(/^[,\s;]+|[,\s;]+$/g, "").trim();
+
+      resultado.push({ lat, lng, observation, timestamp });
     });
     return resultado;
   }, []);
@@ -746,6 +760,36 @@ export default function Home() {
     }
   }, [autoLoadEnabled, parseCoordenadas]);
 
+  // Escuta evento disparado quando a captura é parada via notificação Android
+  useEffect(() => {
+    const handleNativeStopped = () => {
+      setContinuousCapture(false);
+      setStationaryCapture(false);
+      if (continuousIntervalRef.current) {
+        clearInterval(continuousIntervalRef.current);
+        continuousIntervalRef.current = null;
+      }
+      if (watchPositionIdRef.current) {
+        navigator.geolocation.clearWatch(watchPositionIdRef.current);
+        watchPositionIdRef.current = null;
+      }
+      if (stationaryTickerRef.current) {
+        clearInterval(stationaryTickerRef.current);
+        stationaryTickerRef.current = null;
+      }
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+      continuousStateRef.current = null;
+      saveContinuousState(null);
+      setStatus({ type: "info", message: "Captura interrompida via notificação." });
+    };
+
+    window.addEventListener("native-location-stopped", handleNativeStopped);
+    return () => window.removeEventListener("native-location-stopped", handleNativeStopped);
+  }, []);
+
   // Mantém o diagnóstico Android visível e atualizado enquanto o WebView está aberto.
   useEffect(() => {
     const bridge = getNativeGpsBridge();
@@ -756,7 +800,21 @@ export default function Home() {
     const refresh = () => {
       try {
         const raw = bridge.getDiagnostics?.();
-        if (raw) setNativeDiagnostics(JSON.parse(raw) as NativeDiagnostics);
+        if (raw) {
+          const diag = JSON.parse(raw) as NativeDiagnostics;
+          setNativeDiagnostics(diag);
+          // Se o serviço nativo parou pela notificação, sincroniza a UI do app imediatamente
+          if (diag.service === "stopped") {
+            setContinuousCapture(prev => {
+              if (prev) {
+                continuousStateRef.current = null;
+                saveContinuousState(null);
+              }
+              return false;
+            });
+            setStationaryCapture(prev => (prev ? false : prev));
+          }
+        }
       } catch {
         setNativeDiagnostics({
           bridge: true, foregroundLocation: false, backgroundLocation: false,
@@ -833,14 +891,17 @@ export default function Home() {
         fillOpacity: 0.3,
         weight: 2,
         opacity: 1.0,
-      }).addTo(map);
+      });
 
-      // Marker clássica com ícone SVG — anchor no centro
-      const icon = createMarkerIcon(index, colors);
-      const marker = L.marker(center, { icon });
+      // No modo "Traçar linha", NÃO adicionamos o círculo grande ao mapa, para não cobrir a linha com pontos gigantes
       if (!showLine) {
-        marker.addTo(map);
+        circle.addTo(map);
       }
+
+      // Marker: no modo linha, usamos um vértice compacto para manter a visualização limpa
+      const icon = createMarkerIcon(index, colors, showLine);
+      const marker = L.marker(center, { icon });
+      marker.addTo(map);
 
       const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 4px; color: #1e293b;">
         <strong style="color: #0284c7;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 12px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
@@ -856,18 +917,33 @@ export default function Home() {
 
     setActiveCircles(newCircles);
 
-    // Se a linha conectando os pontos estiver ativa, atualiza seus pontos
-    if (showLine && polylineRef.current) {
-      polylineRef.current.setLatLngs(latLngs);
+    // Se a linha conectando os pontos estiver ativa, atualiza ou cria o polyline
+    if (showLine) {
+      if (polylineRef.current) {
+        polylineRef.current.setLatLngs(latLngs);
+      } else if (latLngs.length > 1) {
+        polylineRef.current = L.polyline(latLngs, {
+          color: colors.numberCircleColor || "#0284c7",
+          weight: 5,
+          opacity: 0.9,
+          lineCap: "round",
+          lineJoin: "round",
+        }).addTo(map);
+      }
+    } else {
+      if (polylineRef.current) {
+        polylineRef.current.remove();
+        polylineRef.current = null;
+      }
     }
 
     if (coordsList.length === 0) return;
 
     const latest = coordsList[coordsList.length - 1];
 
-    if (options?.followLatest) {
+    if (options?.followLatest || autoLoadEnabled) {
       // Mantém o nível de zoom atual selecionado pelo usuário e desloca o centro para a coordenada mais recente
-      map.panTo([latest.lat, latest.lng], { animate: true });
+      map.setView([latest.lat, latest.lng], map.getZoom(), { animate: true });
     } else {
       // Ajuste inicial ou manual de enquadramento
       if (coordsList.length > 1) {
@@ -876,7 +952,7 @@ export default function Home() {
         map.setView([latest.lat, latest.lng], 16);
       }
     }
-  }, [radius, colors, showLine]);
+  }, [radius, colors, showLine, autoLoadEnabled]);
 
   // Auto-save e auto-update do mapa
   // Refs para evitar re-renders desnecessários no auto-save
@@ -895,60 +971,74 @@ export default function Home() {
     const isNewPointAdded = parsed.length > prevCoordsCountRef.current && prevCoordsCountRef.current > 0;
     prevCoordsCountRef.current = parsed.length;
     if (mapRef.current) {
-      renderizarNoMapa(parsed, mapRef.current, { followLatest: isNewPointAdded });
+      renderizarNoMapa(parsed, mapRef.current, { followLatest: isNewPointAdded || autoLoadEnabled });
     }
   }, [autoLoadEnabled, dataLoaded, inputText, parseCoordenadas, renderizarNoMapa]);
-
 
   // Atualizar raio dos círculos dinamicamente e reconstruir markers
   const handleRadiusChange = useCallback((newRadius: number) => {
     setRadius(newRadius);
     activeCircles.forEach((c, index) => {
       c.circle.setRadius(newRadius);
-      const icon = createMarkerIcon(index, colors);
+      const icon = createMarkerIcon(index, colors, showLine);
       c.marker.setIcon(icon);
     });
-  }, [activeCircles, colors]);
+  }, [activeCircles, colors, showLine]);
 
   // Traçar/remover linha conectando todos os pontos
   const handleToggleLine = useCallback(() => {
-    if (!mapRef.current || coords.length < 2) {
-      setStatus({ type: "info", message: coords.length < 2 ? "Adicione pelo menos 2 pontos para traçar a linha." : "Mapa não disponível." });
+    if (!mapRef.current) {
+      setStatus({ type: "info", message: "Mapa não disponível." });
+      return;
+    }
+    const currentCoords = coords.length > 0 ? coords : parseCoordenadas(inputText);
+    if (currentCoords.length < 2) {
+      setStatus({ type: "info", message: "Adicione pelo menos 2 pontos para traçar a linha." });
       return;
     }
 
-    if (showLine) {
-      // Remover linha e mostrar markers novamente
-      if (polylineRef.current) {
-        polylineRef.current.remove();
-        polylineRef.current = null;
-      }
-      activeCircles.forEach((c) => {
-        if (!mapRef.current?.hasLayer(c.marker)) {
-          c.marker.addTo(mapRef.current!);
-        }
+    setShowLine((prev) => {
+      const next = !prev;
+      setStatus({
+        type: next ? "success" : "info",
+        message: next ? `Linha traçada conectando ${currentCoords.length} pontos.` : "Linha removida. Círculos de raio restaurados."
       });
-      setShowLine(false);
-      setStatus({ type: "info", message: "Linha removida. Marcadores visíveis." });
-    } else {
-      // Criar linha e esconder markers
-      const path: [number, number][] = coords.map((c) => [c.lat, c.lng]);
-      polylineRef.current = L.polyline(path, {
-        color: colors.numberCircleColor,
-        opacity: 0.8,
-        weight: 3,
-      }).addTo(mapRef.current);
-      // Esconder todos os markers
-      activeCircles.forEach((c) => {
-        c.marker.remove();
-      });
-      setShowLine(true);
-      setStatus({ type: "success", message: `Linha traçada conectando ${coords.length} pontos.` });
+      return next;
+    });
+  }, [coords, inputText, parseCoordenadas]);
+
+  // Sempre que showLine alternar, atualiza a exibição no mapa imediatamente
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const currentCoords = coords.length > 0 ? coords : parseCoordenadas(inputText);
+    if (currentCoords.length > 0) {
+      renderizarNoMapa(currentCoords, mapRef.current, { followLatest: autoLoadEnabled });
     }
-  }, [showLine, coords, activeCircles, colors]);
+  }, [showLine]);
+
+  // Enquadrar percurso inteiro a qualquer momento
+  const handleFitAllBounds = useCallback(() => {
+    if (!mapRef.current) return;
+    const currentCoords = coords.length > 0 ? coords : parseCoordenadas(inputText);
+    if (currentCoords.length === 0) {
+      setStatus({ type: "info", message: "Nenhum ponto para enquadrar." });
+      return;
+    }
+    const latLngs: [number, number][] = currentCoords.map(c => [c.lat, c.lng]);
+    if (latLngs.length > 1) {
+      mapRef.current.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
+    } else {
+      mapRef.current.setView(latLngs[0], 16);
+    }
+    setStatus({ type: "info", message: "Mapa enquadrado em todo o percurso." });
+  }, [coords, inputText, parseCoordenadas]);
 
   // Parar e limpar todos os recursos do modo de coleta por permanência
   const stopStationaryCapture = useCallback((message = "Coletar pausas no movimento interrompida.") => {
+    const nativeBridge = getNativeGpsBridge();
+    if (nativeBridge) {
+      nativeBridge.stop();
+    }
     if (stationaryWatchIdRef.current !== null) {
       navigator.geolocation.clearWatch(stationaryWatchIdRef.current);
       stationaryWatchIdRef.current = null;
@@ -1267,8 +1357,18 @@ export default function Home() {
       return;
     }
     setAnalysisMessages(previous => [...previous, { role: "user", content: question }]);
-    aiAskMutation.mutate({ question, data });
-  }, [aiAskMutation, inputText]);
+    setIsAnalyzing(true);
+    setTimeout(() => {
+      try {
+        const answer = answerDisplacementQuestion(question, data);
+        setAnalysisMessages(previous => [...previous, { role: "assistant", content: answer }]);
+      } catch (err: any) {
+        setAnalysisMessages(previous => [...previous, { role: "assistant", content: `Não foi possível analisar os dados: ${err?.message || "erro ao processar métricas"}` }]);
+      } finally {
+        setIsAnalyzing(false);
+      }
+    }, 150);
+  }, [inputText]);
 
   const handleLimpar = useCallback(() => {
     if (stationaryCapture) {
@@ -1813,6 +1913,16 @@ export default function Home() {
               <span className="whitespace-nowrap">{showLine ? "Remover linha" : "Traçar linha"}</span>
             </Button>
 
+            <Button
+              onClick={handleFitAllBounds}
+              variant="outline"
+              className="w-full min-w-0 min-h-9 h-auto py-2 gap-2 whitespace-normal text-center leading-tight border-cyan-400/30 text-cyan-200 hover:bg-cyan-400/10 transition-all active:scale-[0.97] duration-160"
+            >
+              <Focus className="w-4 h-4 shrink-0" />
+              <span className="whitespace-nowrap">Enquadrar percurso</span>
+            </Button>
+          </div>
+
           {/* Botão Exportar */}
           <div>
             <Button
@@ -1846,7 +1956,6 @@ export default function Home() {
               <Download className="w-4 h-4 shrink-0" />
               <span className="whitespace-nowrap">Exportar Dados</span>
             </Button>
-          </div>
           </div>
           </section>
 
@@ -1971,7 +2080,7 @@ export default function Home() {
               <AIChatBox
                 messages={analysisMessages}
                 onSendMessage={handleAskTrack}
-                isLoading={aiAskMutation.isPending}
+                isLoading={isAnalyzing}
                 height="min(58dvh, 520px)"
                 placeholder="Ex.: qual foi a velocidade média?"
                 emptyStateMessage="Faça uma pergunta sobre o deslocamento"

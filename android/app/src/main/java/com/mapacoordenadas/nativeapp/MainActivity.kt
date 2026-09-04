@@ -2,8 +2,11 @@ package com.mapacoordenadas.nativeapp
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -32,6 +35,14 @@ class MainActivity : Activity() {
     private var pendingIntervalSeconds: Int? = null
     private var pendingStationaryWaitSeconds: Int? = null
     private var triedFallbackUrl = false
+
+    private val serviceStoppedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            runOnUiThread {
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('native-location-stopped'))", null)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +90,13 @@ class MainActivity : Activity() {
         }
         setContentView(webView)
         webView.loadUrl(appUrl)
+
+        val filter = IntentFilter(LocationForegroundService.ACTION_SERVICE_STOPPED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(serviceStoppedReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(serviceStoppedReceiver, filter)
+        }
     }
 
     /** Foreground permission is requested in-app. Background permission is enabled from App Info on Android 11+. */
@@ -158,9 +176,16 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun stop() {
-            val intent = Intent(this@MainActivity, LocationForegroundService::class.java)
-                .setAction(LocationForegroundService.ACTION_STOP)
-            startService(intent)
+            runOnUiThread {
+                val intent = Intent(this@MainActivity, LocationForegroundService::class.java)
+                    .setAction(LocationForegroundService.ACTION_STOP)
+                startService(intent)
+                try {
+                    val manager = getSystemService(android.app.NotificationManager::class.java)
+                    manager?.cancel(LocationForegroundService.NOTIFICATION_ID)
+                } catch (_: Exception) {}
+                webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('native-location-stopped'))", null)
+            }
         }
 
         @JavascriptInterface
@@ -263,6 +288,9 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        try {
+            unregisterReceiver(serviceStoppedReceiver)
+        } catch (_: Exception) {}
         webView.removeJavascriptInterface("AndroidGps")
         webView.destroy()
         super.onDestroy()

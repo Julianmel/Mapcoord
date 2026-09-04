@@ -39,41 +39,49 @@ export function MapView({
       attributionControl: true,
     });
 
-    // Camada 1: OpenStreetMap Standard (Gratuito e sem chave)
+    // Camadas Google Maps (Tiles gratuitos e diretos, sem necessidade de chave de API)
+    const googleRoadmap = L.tileLayer("https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
+      maxZoom: 21,
+      subdomains: ["0", "1", "2", "3"],
+      attribution: "&copy; Google Maps",
+    });
+
+    const googleSatellite = L.tileLayer("https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", {
+      maxZoom: 21,
+      subdomains: ["0", "1", "2", "3"],
+      attribution: "&copy; Google Maps",
+    });
+
+    const googleHybrid = L.tileLayer("https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", {
+      maxZoom: 21,
+      subdomains: ["0", "1", "2", "3"],
+      attribution: "&copy; Google Maps",
+    });
+
+    const googleTerrain = L.tileLayer("https://mt{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}", {
+      maxZoom: 21,
+      subdomains: ["0", "1", "2", "3"],
+      attribution: "&copy; Google Maps",
+    });
+
+    // Camada alternativa: OpenStreetMap Standard
     const osmLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     });
 
-    // Camada 2: Imagens de Satélite (Esri World Imagery)
-    const satelliteLayer = L.tileLayer(
-      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      {
-        maxZoom: 19,
-        attribution: "Tiles &copy; Esri &mdash; Source: Esri, USGS",
-      }
-    );
-
-    // Camada 3: Cartografia Escura (CartoDB Dark Matter)
-    const cartoDarkLayer = L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      {
-        maxZoom: 19,
-        subdomains: "abcd",
-        attribution: "&copy; OpenStreetMap &copy; CARTO",
-      }
-    );
-
-    // Adiciona OpenStreetMap como camada padrão ativa
-    osmLayer.addTo(map);
+    // Adiciona Google Maps Roadmap como camada padrão ativa
+    googleRoadmap.addTo(map);
 
     // Adiciona controle de camadas no topo direito para alternar facilmente
     L.control
       .layers(
         {
+          "Google Maps (Padrão)": googleRoadmap,
+          "Google Maps (Satélite)": googleSatellite,
+          "Google Maps (Híbrido)": googleHybrid,
+          "Google Maps (Relevo)": googleTerrain,
           "OpenStreetMap": osmLayer,
-          "Satélite (Esri)": satelliteLayer,
-          "Cartografia Escura": cartoDarkLayer,
         },
         {},
         { position: "topright" }

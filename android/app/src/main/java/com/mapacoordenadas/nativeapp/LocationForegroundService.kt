@@ -139,6 +139,13 @@ class LocationForegroundService : Service() {
         stationarySinceMs = null
         stationaryCaptured = false
         stopForeground(STOP_FOREGROUND_REMOVE)
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.cancel(NOTIFICATION_ID)
+        } catch (_: Exception) {}
+        try {
+            sendBroadcast(Intent(ACTION_SERVICE_STOPPED).setPackage(packageName))
+        } catch (_: Exception) {}
         stopSelf()
     }
 
@@ -313,6 +320,13 @@ class LocationForegroundService : Service() {
 
     override fun onDestroy() {
         if (running.getAndSet(false)) fusedClient.removeLocationUpdates(locationCallback)
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.cancel(NOTIFICATION_ID)
+        } catch (_: Exception) {}
+        try {
+            sendBroadcast(Intent(ACTION_SERVICE_STOPPED).setPackage(packageName))
+        } catch (_: Exception) {}
         super.onDestroy()
     }
 
@@ -321,6 +335,7 @@ class LocationForegroundService : Service() {
     companion object {
         const val ACTION_START = "com.mapacoordenadas.START_LOCATION"
         const val ACTION_STOP = "com.mapacoordenadas.STOP_LOCATION"
+        const val ACTION_SERVICE_STOPPED = "com.mapacoordenadas.SERVICE_STOPPED"
         const val EXTRA_INTERVAL_MS = "interval_ms"
         const val EXTRA_STATIONARY_WAIT_SECONDS = "stationary_wait_seconds"
         const val STATIONARY_MOVEMENT_THRESHOLD_METERS = 3.0
