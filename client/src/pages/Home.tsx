@@ -249,22 +249,61 @@ function saveData(text: string) {
 function createMarkerIcon(
   index: number,
   colors: ColorConfig,
-  compact = false,
+  variant: "normal" | "start" | "end" | "waypoint" = "normal"
 ): L.DivIcon {
-  const size = compact ? 12 : 18;
+  if (variant === "start") {
+    const size = 14;
+    const half = size / 2;
+    return L.divIcon({
+      className: "custom-map-marker",
+      html: `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${half}" cy="${half}" r="${half - 1}" fill="#16a34a" stroke="#ffffff" stroke-width="1.5"/>
+        <circle cx="${half}" cy="${half}" r="2.5" fill="#ffffff"/>
+      </svg>`.trim(),
+      iconSize: [size, size],
+      iconAnchor: [half, half],
+    });
+  }
+
+  if (variant === "end") {
+    const size = 14;
+    const half = size / 2;
+    return L.divIcon({
+      className: "custom-map-marker",
+      html: `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${half}" cy="${half}" r="${half - 1}" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+        <circle cx="${half}" cy="${half}" r="2.5" fill="#ffffff"/>
+      </svg>`.trim(),
+      iconSize: [size, size],
+      iconAnchor: [half, half],
+    });
+  }
+
+  if (variant === "waypoint") {
+    const size = 10;
+    const half = size / 2;
+    return L.divIcon({
+      className: "custom-map-marker",
+      html: `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${half}" cy="${half}" r="${half - 1}" fill="#f59e0b" stroke="#ffffff" stroke-width="1"/>
+      </svg>`.trim(),
+      iconSize: [size, size],
+      iconAnchor: [half, half],
+    });
+  }
+
+  // Marcador normal (compacto, 13px)
+  const size = 13;
   const half = size / 2;
   const r = half - 1;
 
-  const svg = compact
-    ? `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${half}" cy="${half}" r="${r}" fill="${colors.numberCircleColor || "#0284c7"}" stroke="#ffffff" stroke-width="1.5"/>
-    </svg>
-  `.trim()
-    : `
+  const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
       <circle cx="${half}" cy="${half}" r="${r}" fill="${colors.numberCircleColor}" stroke="${colors.numberCircleColor}" stroke-width="1"/>
-      <text x="${half}" y="${half}" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="8" font-weight="700">${index + 1}</text>
+      <text x="${half}" y="${half}" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="7" font-weight="700">${index + 1}</text>
     </svg>
   `.trim();
 
@@ -889,42 +928,68 @@ export default function Home() {
         color: colors.circleBorderColor,
         fillColor: colors.circleFillColor,
         fillOpacity: 0.3,
-        weight: 2,
+        weight: 1.5,
         opacity: 1.0,
       });
 
-      // No modo "Traçar linha", NÃO adicionamos o círculo grande ao mapa, para não cobrir a linha com pontos gigantes
+      // No modo "Traçar linha", NÃO adicionamos círculos de raio ao mapa
       if (!showLine) {
         circle.addTo(map);
       }
 
-      // Marker: no modo linha, usamos um vértice compacto para manter a visualização limpa
-      const icon = createMarkerIcon(index, colors, showLine);
-      const marker = L.marker(center, { icon });
-      marker.addTo(map);
+      const isFirst = index === 0;
+      const isLast = index === coordsList.length - 1;
+      const hasCustomObs = Boolean(coord.observation && !coord.observation.startsWith("Coleta #"));
 
-      const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 4px; color: #1e293b;">
-        <strong style="color: #0284c7;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 12px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
+      // No modo "Traçar linha", adiciona marcador apenas no Início, no Fim e em pontos com anotação manual
+      // Isso impede poluir a linha com centenas de círculos colados
+      const shouldRenderMarker = !showLine || isFirst || isLast || hasCustomObs;
+
+      let marker: L.Marker;
+      if (shouldRenderMarker) {
+        const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "waypoint") : "normal";
+        const icon = createMarkerIcon(index, colors, variant);
+        marker = L.marker(center, { icon });
+        marker.addTo(map);
+
+        const title = isFirst ? "Início do Percurso" : isLast ? "Fim / Ponto Atual" : `Ponto ${index + 1}`;
+        const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
+          <strong style="color: ${isFirst ? '#16a34a' : isLast ? '#dc2626' : '#0284c7'};">${title}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
+          Lat: ${coord.lat.toFixed(6)}<br/>
+          Lng: ${coord.lng.toFixed(6)}
+        </div>`;
+
+        marker.bindPopup(popupContent);
+      } else {
+        const icon = createMarkerIcon(index, colors, "normal");
+        marker = L.marker(center, { icon });
+      }
+
+      const popupContentCircle = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
+        <strong style="color: #0284c7;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
         Lat: ${coord.lat.toFixed(6)}<br/>
         Lng: ${coord.lng.toFixed(6)}
       </div>`;
-
-      circle.bindPopup(popupContent);
-      marker.bindPopup(popupContent);
+      circle.bindPopup(popupContentCircle);
 
       newCircles.push({ circle, marker, center });
     });
 
     setActiveCircles(newCircles);
 
-    // Se a linha conectando os pontos estiver ativa, atualiza ou cria o polyline
+    // Se a linha conectando os pontos estiver ativa, atualiza ou cria o polyline com traço fino e elegante (2.5px)
     if (showLine) {
       if (polylineRef.current) {
         polylineRef.current.setLatLngs(latLngs);
+        polylineRef.current.setStyle({
+          color: colors.numberCircleColor || "#dc2626",
+          weight: 2.5,
+          opacity: 0.9,
+        });
       } else if (latLngs.length > 1) {
         polylineRef.current = L.polyline(latLngs, {
-          color: colors.numberCircleColor || "#0284c7",
-          weight: 5,
+          color: colors.numberCircleColor || "#dc2626",
+          weight: 2.5,
           opacity: 0.9,
           lineCap: "round",
           lineJoin: "round",
@@ -980,7 +1045,10 @@ export default function Home() {
     setRadius(newRadius);
     activeCircles.forEach((c, index) => {
       c.circle.setRadius(newRadius);
-      const icon = createMarkerIcon(index, colors, showLine);
+      const isFirst = index === 0;
+      const isLast = index === activeCircles.length - 1;
+      const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "waypoint") : "normal";
+      const icon = createMarkerIcon(index, colors, variant);
       c.marker.setIcon(icon);
     });
   }, [activeCircles, colors, showLine]);
