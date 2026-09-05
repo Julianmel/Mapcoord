@@ -73,6 +73,13 @@ class LocationForegroundService : Service() {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putInt(KEY_INTERVAL_SECONDS, (intervalMs / 1000L).toInt().coerceAtLeast(1))
             .putInt(KEY_STATIONARY_WAIT_SECONDS, stationaryWaitSeconds ?: 0)
+            .remove(KEY_LAST_LATITUDE)
+            .remove(KEY_LAST_LONGITUDE)
+            .remove(KEY_LAST_GPS_TIME)
+            .remove(KEY_LAST_LOCATION_TIME)
+            .remove(KEY_LAST_SEGMENT_DISTANCE_METERS)
+            .remove(KEY_ELAPSED_SINCE_PREVIOUS_SECONDS)
+            .remove(KEY_INSTANT_SPEED_KMH)
             .apply()
         stationaryAnchor = null
         stationarySinceMs = null
@@ -92,10 +99,6 @@ class LocationForegroundService : Service() {
         if (wasRunning) {
             fusedClient.removeLocationUpdates(locationCallback)
         }
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putInt(KEY_INTERVAL_SECONDS, (intervalMs / 1000L).toInt().coerceAtLeast(1))
-            .apply()
 
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
             .setMinUpdateIntervalMillis(intervalMs)
@@ -105,14 +108,6 @@ class LocationForegroundService : Service() {
 
         try {
             fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
-                .addOnSuccessListener {
-                    // Tenta registrar imediatamente a última posição conhecida, sem esperar o próximo ciclo.
-                    fusedClient.lastLocation.addOnSuccessListener { location ->
-                        if (location != null && running.get()) {
-                            storeLocation(location)
-                        }
-                    }
-                }
                 .addOnFailureListener { error ->
                     val message = error.message ?: "falha ao solicitar atualizações GPS"
                     writeStatus(running = false, error = message)
@@ -159,7 +154,8 @@ class LocationForegroundService : Service() {
         val previousGpsTime = prefs.getLong(KEY_LAST_GPS_TIME, 0L)
         val currentGpsTime = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
         val elapsedSeconds = if (previousGpsTime > 0L && currentGpsTime > previousGpsTime) (currentGpsTime - previousGpsTime) / 1000.0 else Double.NaN
-        val segmentDistance = if (previousLatitude != null && previousLongitude != null) distanceMeters(previousLatitude, previousLongitude, latitude, longitude) else 0.0
+        val hasPrevious = previousLatitude != null && previousLongitude != null
+        val segmentDistance = if (hasPrevious) distanceMeters(previousLatitude!!, previousLongitude!!, latitude, longitude) else 0.0
         val segmentSpeedKmh = if (elapsedSeconds.isFinite() && elapsedSeconds > 0.0) segmentDistance / elapsedSeconds * 3.6 else 0.0
         val stationaryMode = stationaryWaitMs != null
         val stationaryElapsedSeconds = stationarySinceMs?.let { ((System.currentTimeMillis() - it) / 1000.0).coerceAtLeast(0.0) } ?: 0.0
@@ -170,7 +166,9 @@ class LocationForegroundService : Service() {
             updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
             return
         }
-        if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || (segmentDistance > 500.0 && segmentSpeedKmh > 100.0)) {
+        val isZeroOrNegativeTimeJump = hasPrevious && (elapsedSeconds.isNaN() || elapsedSeconds <= 0.0) && segmentDistance > 15.0
+        val isSpeedAnomaly = hasPrevious && (segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || (segmentDistance > 300.0 && segmentSpeedKmh > 90.0) || (elapsedSeconds < 2.0 && segmentDistance > 75.0))
+        if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || isSpeedAnomaly || isZeroOrNegativeTimeJump) {
             updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
             showStatusNotification("ATIVA — ponto anômalo descartado")
             return
@@ -359,8 +357,8 @@ class LocationForegroundService : Service() {
         const val NOTIFICATION_ID = 4101
         const val DEFAULT_INTERVAL_MS = 5000L
         const val MAX_PENDING = 10000
-        const val MAX_ACCEPTED_SPEED_KMH = 180.0
-        const val MAX_ACCEPTED_ACCURACY_METERS = 150.0
+        const val MAX_ACCEPTED_SPEED_KMH = 130.0
+        const val MAX_ACCEPTED_ACCURACY_METERS = 40.0
         const val MAX_STATIONARY_SPEED_KMH = 2.5
     }
 }

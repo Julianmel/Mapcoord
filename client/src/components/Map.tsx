@@ -15,7 +15,7 @@ export interface MapViewProps {
   className?: string;
   initialCenter?: { lat: number; lng: number };
   initialZoom?: number;
-  onMapReady?: (map: L.Map) => void;
+  onMapReady?: (map: L.Map) => void | (() => void);
 }
 
 export function MapView({
@@ -27,11 +27,16 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
 
+  const onMapReadyRef = useRef(onMapReady);
+  useEffect(() => {
+    onMapReadyRef.current = onMapReady;
+  }, [onMapReady]);
+
   useEffect(() => {
     if (!containerRef.current) return;
     if (mapRef.current) return;
 
-    // Inicializa o mapa Leaflet
+    // Inicializa o mapa Leaflet uma única vez
     const map = L.map(containerRef.current, {
       center: [initialCenter.lat, initialCenter.lng],
       zoom: initialZoom,
@@ -90,8 +95,9 @@ export function MapView({
 
     mapRef.current = map;
 
-    if (onMapReady) {
-      onMapReady(map);
+    let cleanupOnMapReady: void | (() => void);
+    if (onMapReadyRef.current) {
+      cleanupOnMapReady = onMapReadyRef.current(map);
     }
 
     // Observer para garantir que o mapa redimensione perfeitamente ao ajustar painéis
@@ -102,10 +108,13 @@ export function MapView({
 
     return () => {
       resizeObserver.disconnect();
+      if (typeof cleanupOnMapReady === "function") {
+        cleanupOnMapReady();
+      }
       map.remove();
       mapRef.current = null;
     };
-  }, [initialCenter.lat, initialCenter.lng, initialZoom, onMapReady]);
+  }, []);
 
   return (
     <div className={cn("relative w-full h-[500px] overflow-hidden bg-muted/20", className)}>

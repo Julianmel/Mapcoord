@@ -79,16 +79,23 @@ export function isAnomalousAutomaticCapture(
 ): boolean {
   const speed = Number(item.speedKmh);
   if (stationary && Number.isFinite(speed) && Math.abs(speed) > 2.5) return true;
-  if (Number.isFinite(speed) && (speed < -1 || speed > 180)) return true;
-  if (Number.isFinite(item.accuracy) && Number(item.accuracy) > 150) return true;
+  if (Number.isFinite(speed) && (speed < -1 || speed > 130)) return true;
+  if (Number.isFinite(item.accuracy) && Number(item.accuracy) > 40) return true;
   if (!Number.isFinite(item.latitude) || !Number.isFinite(item.longitude)) return true;
   if (previous && Number.isFinite(timestampMs)) {
-    if (timestampMs <= previous.timestampMs) return true;
-    const elapsed = (timestampMs - previous.timestampMs) / 1000;
-    if (elapsed <= 0 || elapsed > 86400) return true;
     const segmentDistance = distanceMeters(previous.lat, previous.lng, item.latitude, item.longitude);
-    const segmentSpeed = segmentDistance / elapsed * 3.6;
-    if (segmentSpeed > 180 || (segmentSpeed > 100 && segmentDistance > 500)) return true;
+    if (timestampMs <= previous.timestampMs) {
+      if (segmentDistance > 15) return true;
+      return true; // mesmo timestamp ou decrescente
+    }
+    const elapsed = (timestampMs - previous.timestampMs) / 1000;
+    if (elapsed <= 0) {
+      if (segmentDistance > 15) return true;
+      return true;
+    }
+    if (elapsed > 86400) return true;
+    const segmentSpeed = (segmentDistance / elapsed) * 3.6;
+    if (segmentSpeed > 130 || (segmentSpeed > 90 && segmentDistance > 300) || (elapsed < 2 && segmentDistance > 75)) return true;
     if (stationary && segmentSpeed > 2.5) return true;
   }
   return false;

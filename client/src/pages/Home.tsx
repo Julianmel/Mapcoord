@@ -1007,8 +1007,11 @@ export default function Home() {
     const latest = coordsList[coordsList.length - 1];
 
     if (options?.followLatest || autoLoadEnabled) {
-      // Mantém o nível de zoom atual selecionado pelo usuário e desloca o centro para a coordenada mais recente
-      map.setView([latest.lat, latest.lng], map.getZoom(), { animate: true });
+      // Mantém o nível de zoom atual selecionado pelo usuário e desloca o centro para a coordenada mais recente.
+      // Se o zoom estiver no nível inicial continental (ex: <= 5), aproxima automaticamente para zoom 16 para acompanhar o percurso.
+      const currentZoom = map.getZoom();
+      const targetZoom = currentZoom <= 5 ? 16 : currentZoom;
+      map.setView([latest.lat, latest.lng], targetZoom, { animate: true });
     } else {
       // Ajuste inicial ou manual de enquadramento
       if (coordsList.length > 1) {
@@ -1258,6 +1261,16 @@ export default function Home() {
     }, 1000);
   }, [continuousCapture, stationaryWaitSeconds]);
 
+  const coordsRef = useRef(coords);
+  useEffect(() => {
+    coordsRef.current = coords;
+  }, [coords]);
+
+  const renderizarNoMapaRef = useRef(renderizarNoMapa);
+  useEffect(() => {
+    renderizarNoMapaRef.current = renderizarNoMapa;
+  }, [renderizarNoMapa]);
+
   // handleMapReady: long-press (3s) captura a coordenada exata do clique/toque
   // Abordagem unificada:
   // 1. mousedown/touchstart: registra timestamp e inicia timer de 3s
@@ -1266,8 +1279,8 @@ export default function Home() {
   // 4. Se soltou antes de 3s: cancela, o click normal é ignorado
   const handleMapReady = useCallback((map: L.Map) => {
     mapRef.current = map;
-    if (coords.length > 0) {
-      renderizarNoMapa(coords, map);
+    if (coordsRef.current.length > 0) {
+      renderizarNoMapaRef.current(coordsRef.current, map);
     }
 
     const LONG_PRESS_DELAY = 3000;
@@ -1416,7 +1429,7 @@ export default function Home() {
       mapDiv.removeEventListener("touchcancel", onTouchCancel);
       mapDiv.removeEventListener("touchmove", onTouchMove);
     };
-  }, [coords, renderizarNoMapa]);
+  }, []);
 
   const handleAskTrack = useCallback((question: string) => {
     const data = inputText.trim();
@@ -1447,15 +1460,29 @@ export default function Home() {
     setRadius(3);
     setStatus({ type: "idle", message: "" });
     sequenceCounterRef.current = 0;
-    activeCircles.forEach((c) => {
+    prevCoordsCountRef.current = 0;
+    lastRecordedPointRef.current = null;
+
+    if (polylineRef.current) {
+      polylineRef.current.remove();
+      polylineRef.current = null;
+    }
+
+    activeCirclesRef.current.forEach((c) => {
       c.circle.remove();
       c.marker.remove();
     });
+    activeCirclesRef.current = [];
     setActiveCircles([]);
+
+    const nativeBridge = getNativeGpsBridge();
+    if (nativeBridge?.clearPendingLocations) {
+      nativeBridge.clearPendingLocations();
+    }
+
     // Só limpar o localStorage via botão Limpar
     localStorage.removeItem(DATA_STORAGE_KEY);
-
-  }, [activeCircles, stationaryCapture, stopStationaryCapture]);
+  }, [stationaryCapture, stopStationaryCapture]);
 
   // Selecionar cor para um elemento
   const handleSelectColor = useCallback((colorKey: keyof ColorConfig, color: string) => {

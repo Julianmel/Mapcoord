@@ -199,6 +199,14 @@ class MainActivity : Activity() {
             getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE)
                 .edit()
                 .putString(LocationForegroundService.KEY_PENDING, JSONArray().toString())
+                .putInt(LocationForegroundService.KEY_PENDING_COUNT, 0)
+                .remove(LocationForegroundService.KEY_LAST_LATITUDE)
+                .remove(LocationForegroundService.KEY_LAST_LONGITUDE)
+                .remove(LocationForegroundService.KEY_LAST_GPS_TIME)
+                .remove(LocationForegroundService.KEY_LAST_LOCATION_TIME)
+                .remove(LocationForegroundService.KEY_LAST_SEGMENT_DISTANCE_METERS)
+                .remove(LocationForegroundService.KEY_ELAPSED_SINCE_PREVIOUS_SECONDS)
+                .remove(LocationForegroundService.KEY_INSTANT_SPEED_KMH)
                 .apply()
         }
 
