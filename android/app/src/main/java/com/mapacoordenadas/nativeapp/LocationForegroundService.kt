@@ -33,7 +33,6 @@ class LocationForegroundService : Service() {
     private var stationaryAnchor: Pair<Double, Double>? = null
     private var stationarySinceMs: Long? = null
     private var stationaryCaptured = false
-    private var consecutiveAnomalies = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -85,7 +84,6 @@ class LocationForegroundService : Service() {
         stationaryAnchor = null
         stationarySinceMs = null
         stationaryCaptured = false
-        consecutiveAnomalies = 0
         val wasRunning = running.getAndSet(true)
         writeStatus(running = true, error = "")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -135,7 +133,6 @@ class LocationForegroundService : Service() {
         stationaryAnchor = null
         stationarySinceMs = null
         stationaryCaptured = false
-        consecutiveAnomalies = 0
         stopForeground(STOP_FOREGROUND_REMOVE)
         try {
             val manager = getSystemService(NotificationManager::class.java)
@@ -157,8 +154,7 @@ class LocationForegroundService : Service() {
         val previousGpsTime = prefs.getLong(KEY_LAST_GPS_TIME, 0L)
         val currentGpsTime = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
         val elapsedSeconds = if (previousGpsTime > 0L && currentGpsTime > previousGpsTime) (currentGpsTime - previousGpsTime) / 1000.0 else Double.NaN
-        val hasPrevious = previousLatitude != null && previousLongitude != null
-        val segmentDistance = if (hasPrevious) distanceMeters(previousLatitude!!, previousLongitude!!, latitude, longitude) else 0.0
+        val segmentDistance = if (previousLatitude != null && previousLongitude != null) distanceMeters(previousLatitude, previousLongitude, latitude, longitude) else 0.0
         val segmentSpeedKmh = if (elapsedSeconds.isFinite() && elapsedSeconds > 0.0) segmentDistance / elapsedSeconds * 3.6 else 0.0
         val stationaryMode = stationaryWaitMs != null
         val stationaryElapsedSeconds = stationarySinceMs?.let { ((System.currentTimeMillis() - it) / 1000.0).coerceAtLeast(0.0) } ?: 0.0
@@ -169,19 +165,10 @@ class LocationForegroundService : Service() {
             updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
             return
         }
-        val isZeroOrNegativeTimeJump = hasPrevious && (elapsedSeconds.isNaN() || elapsedSeconds <= 0.0) && segmentDistance > 100.0
-        val isSpeedAnomaly = hasPrevious && elapsedSeconds.isFinite() && elapsedSeconds > 0.0 && segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH
-        if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || isSpeedAnomaly || isZeroOrNegativeTimeJump) {
-            consecutiveAnomalies++
-            if (consecutiveAnomalies < 3) {
-                updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
-                showStatusNotification("ATIVA — ponto anômalo descartado")
-                return
-            }
-            // Se acumular 3 anomalias seguidas, sincroniza com a nova posição
-            consecutiveAnomalies = 0
-        } else {
-            consecutiveAnomalies = 0
+        if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || (segmentDistance > 500.0 && segmentSpeedKmh > 100.0)) {
+            updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
+            showStatusNotification("ATIVA — ponto anômalo descartado")
+            return
         }
         val current = try { JSONArray(prefs.getString(KEY_PENDING, "[]")) } catch (_: Exception) { JSONArray() }
         val timestamp = timestamp()

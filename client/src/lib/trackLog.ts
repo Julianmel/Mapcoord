@@ -83,16 +83,13 @@ export function isAnomalousAutomaticCapture(
   if (Number.isFinite(item.accuracy) && Number(item.accuracy) > 150) return true;
   if (!Number.isFinite(item.latitude) || !Number.isFinite(item.longitude)) return true;
   if (previous && Number.isFinite(timestampMs)) {
-    const segmentDistance = distanceMeters(previous.lat, previous.lng, item.latitude, item.longitude);
+    if (timestampMs <= previous.timestampMs) return true;
     const elapsed = (timestampMs - previous.timestampMs) / 1000;
-    if (elapsed > 0 && elapsed <= 86400) {
-      const segmentSpeed = (segmentDistance / elapsed) * 3.6;
-      if (segmentSpeed > 180) return true;
-      if (stationary && segmentSpeed > 2.5) return true;
-    } else if (elapsed <= 0) {
-      // Ponto no mesmo segundo: só rejeita se for salto absurdo (> 100m em 0s)
-      if (segmentDistance > 100) return true;
-    }
+    if (elapsed <= 0 || elapsed > 86400) return true;
+    const segmentDistance = distanceMeters(previous.lat, previous.lng, item.latitude, item.longitude);
+    const segmentSpeed = segmentDistance / elapsed * 3.6;
+    if (segmentSpeed > 180 || (segmentSpeed > 100 && segmentDistance > 500)) return true;
+    if (stationary && segmentSpeed > 2.5) return true;
   }
   return false;
 }
@@ -124,7 +121,6 @@ export function filterNativePendingLocations<T extends PendingLocationLike>(
   let cursor = previous;
   const accepted: AcceptedPendingLocation<T>[] = [];
   let rejectedCount = 0;
-  let consecutiveRejected = 0;
 
   for (const item of items) {
     const timestamp = /^\d{14}$/.test(item.timestamp ?? "") ? item.timestamp! : fallbackTimestamp();
@@ -135,15 +131,8 @@ export function filterNativePendingLocations<T extends PendingLocationLike>(
       isAnomalousAutomaticCapture(item, cursor, timestampMs, stationary);
     if (rejected) {
       rejectedCount += 1;
-      consecutiveRejected += 1;
-      // Se acumular 3 rejeições seguidas, ressincroniza o cursor com o ponto atual
-      if (consecutiveRejected >= 3 && Number.isFinite(item.latitude) && Number.isFinite(item.longitude) && Number(item.accuracy ?? 0) <= 150) {
-        cursor = { lat: item.latitude, lng: item.longitude, timestampMs };
-        consecutiveRejected = 0;
-      }
       continue;
     }
-    consecutiveRejected = 0;
     accepted.push({ item, timestamp, timestampMs });
     cursor = { lat: item.latitude, lng: item.longitude, timestampMs };
   }
