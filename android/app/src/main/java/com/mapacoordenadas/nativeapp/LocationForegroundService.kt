@@ -33,6 +33,7 @@ class LocationForegroundService : Service() {
     private var stationaryAnchor: Pair<Double, Double>? = null
     private var stationarySinceMs: Long? = null
     private var stationaryCaptured = false
+    private var consecutiveAnomalies = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -84,6 +85,7 @@ class LocationForegroundService : Service() {
         stationaryAnchor = null
         stationarySinceMs = null
         stationaryCaptured = false
+        consecutiveAnomalies = 0
         val wasRunning = running.getAndSet(true)
         writeStatus(running = true, error = "")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -133,6 +135,7 @@ class LocationForegroundService : Service() {
         stationaryAnchor = null
         stationarySinceMs = null
         stationaryCaptured = false
+        consecutiveAnomalies = 0
         stopForeground(STOP_FOREGROUND_REMOVE)
         try {
             val manager = getSystemService(NotificationManager::class.java)
@@ -166,12 +169,19 @@ class LocationForegroundService : Service() {
             updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
             return
         }
-        val isZeroOrNegativeTimeJump = hasPrevious && (elapsedSeconds.isNaN() || elapsedSeconds <= 0.0) && segmentDistance > 15.0
-        val isSpeedAnomaly = hasPrevious && (segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || (segmentDistance > 300.0 && segmentSpeedKmh > 90.0) || (elapsedSeconds < 2.0 && segmentDistance > 75.0))
+        val isZeroOrNegativeTimeJump = hasPrevious && (elapsedSeconds.isNaN() || elapsedSeconds <= 0.0) && segmentDistance > 100.0
+        val isSpeedAnomaly = hasPrevious && elapsedSeconds.isFinite() && elapsedSeconds > 0.0 && segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH
         if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || isSpeedAnomaly || isZeroOrNegativeTimeJump) {
-            updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
-            showStatusNotification("ATIVA — ponto anômalo descartado")
-            return
+            consecutiveAnomalies++
+            if (consecutiveAnomalies < 3) {
+                updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
+                showStatusNotification("ATIVA — ponto anômalo descartado")
+                return
+            }
+            // Se acumular 3 anomalias seguidas, sincroniza com a nova posição
+            consecutiveAnomalies = 0
+        } else {
+            consecutiveAnomalies = 0
         }
         val current = try { JSONArray(prefs.getString(KEY_PENDING, "[]")) } catch (_: Exception) { JSONArray() }
         val timestamp = timestamp()
@@ -357,8 +367,8 @@ class LocationForegroundService : Service() {
         const val NOTIFICATION_ID = 4101
         const val DEFAULT_INTERVAL_MS = 5000L
         const val MAX_PENDING = 10000
-        const val MAX_ACCEPTED_SPEED_KMH = 130.0
-        const val MAX_ACCEPTED_ACCURACY_METERS = 40.0
+        const val MAX_ACCEPTED_SPEED_KMH = 180.0
+        const val MAX_ACCEPTED_ACCURACY_METERS = 150.0
         const val MAX_STATIONARY_SPEED_KMH = 2.5
     }
 }

@@ -427,13 +427,11 @@ export default function Home() {
         if (validPending.length > 0) {
           let next = loadSavedData();
           let importedCount = 0;
-          for (const item of validPending) {
+          const validation = filterNativePendingLocations(validPending, lastRecordedPointRef.current, getTimestamp);
+          for (const { item, timestamp, timestampMs } of validation.accepted) {
             const interval = Number.isFinite(item.intervalSeconds) ? item.intervalSeconds : 5;
             const wait = Number.isFinite(item.waitSeconds) ? item.waitSeconds : interval;
-            const timestamp = item.timestamp || getTimestamp();
-            const timestampMs = timestampToMillis(timestamp);
             const stationary = item.mode === "stationary";
-            if ((stationary && (!Number.isFinite(item.speedKmh) || Math.abs(Number(item.speedKmh)) > 2.5)) || isAnomalousAutomaticCapture(item, lastRecordedPointRef.current, timestampMs, stationary)) continue;
             sequenceCounterRef.current += 1;
             const currentPoint = { lat: item.latitude, lng: item.longitude, timestampMs };
             const segmentMetadata = formatSegmentMetadata(lastRecordedPointRef.current, currentPoint);
@@ -450,7 +448,7 @@ export default function Home() {
           setInputText(next);
           if (autoLoadEnabled) setCoords(parseCoordenadas(next));
           nativeBridge.clearPendingLocations();
-          setStatus({ type: "success", message: `${importedCount} ponto(s) capturado(s) em background foram importados${importedCount < validPending.length ? "; anomalias descartadas" : ""}.` });
+          setStatus({ type: "success", message: `${importedCount} ponto(s) capturado(s) em background foram importados${validation.rejectedCount > 0 ? "; anomalias descartadas" : ""}.` });
         }
       } catch {
         setStatus({ type: "error", message: "Não foi possível importar os pontos capturados em background." });
