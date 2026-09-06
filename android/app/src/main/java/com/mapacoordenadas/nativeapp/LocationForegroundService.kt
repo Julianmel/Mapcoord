@@ -181,6 +181,7 @@ class LocationForegroundService : Service() {
         val stationaryElapsedSeconds = stationarySinceMs?.let { ((System.currentTimeMillis() - it) / 1000.0).coerceAtLeast(0.0) } ?: 0.0
         val stationaryAnchorDistance = stationaryAnchor?.let { distanceMeters(it.first, it.second, latitude, longitude) } ?: 0.0
         val stationaryDerivedSpeedKmh = if (stationaryElapsedSeconds > 0.0) stationaryAnchorDistance / stationaryElapsedSeconds * 3.6 else 0.0
+        val instantSpeedKmh = if (location.hasSpeed()) location.speed.toDouble() * 3.6 else if (stationaryMode) stationaryDerivedSpeedKmh else segmentSpeedKmh
         val hasPrevious = previousLatitude != null && previousLongitude != null
         val isStationaryDrift = hasPrevious && instantSpeedKmh < 1.5 && segmentDistance > 20.0 && (elapsedSeconds.isFinite() && elapsedSeconds < 60.0)
 
