@@ -70,4 +70,30 @@ const firstPoint = { lat: -16.74305, lng: -49.08752, timestampMs: timestampToMil
     expect(isAnomalousAutomaticCapture(moving, firstPoint, nextTimestamp, true)).toBe(true);
     expect(isAnomalousAutomaticCapture(stationary, firstPoint, nextTimestamp, true)).toBe(false);
   });
+
+  it("rejects coarse cellular network locations with accuracy > 50m", () => {
+    const nextTimestamp = timestampToMillis("20260828120010");
+    const cellularPoint = { latitude: firstPoint.lat, longitude: firstPoint.lng, speedKmh: 0.0, accuracy: 87.6 };
+    const goodGpsPoint = { latitude: firstPoint.lat, longitude: firstPoint.lng, speedKmh: 0.0, accuracy: 14.1 };
+
+    expect(isAnomalousAutomaticCapture(cellularPoint, firstPoint, nextTimestamp)).toBe(true);
+    expect(isAnomalousAutomaticCapture(goodGpsPoint, firstPoint, nextTimestamp)).toBe(false);
+  });
+
+  it("accepts normal highway driving at > 100 km/h with distance > 500m", () => {
+    // 600 metros em 20 segundos = 30 m/s = 108 km/h (rodovia normal)
+    const highwayTimestamp = timestampToMillis("20260828120020");
+    // Coordenada ~600m ao norte
+    const highwayPoint = { latitude: firstPoint.lat + 0.0054, longitude: firstPoint.lng, speedKmh: 108, accuracy: 12 };
+
+    expect(isAnomalousAutomaticCapture(highwayPoint, firstPoint, highwayTimestamp)).toBe(false);
+  });
+
+  it("rejects stationary drift jumps (> 20m when speed < 1.5 km/h)", () => {
+    const nextTimestamp = timestampToMillis("20260828120005");
+    // Coordenada ~70m distante com velocidade 0.0 km/h (deriva celular típica)
+    const driftPoint = { latitude: firstPoint.lat + 0.00063, longitude: firstPoint.lng, speedKmh: 0.0, accuracy: 25 };
+
+    expect(isAnomalousAutomaticCapture(driftPoint, firstPoint, nextTimestamp)).toBe(true);
+  });
 });

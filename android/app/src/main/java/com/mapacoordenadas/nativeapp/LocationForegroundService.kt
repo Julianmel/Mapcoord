@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.location.Location
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -33,6 +34,8 @@ class LocationForegroundService : Service() {
     private var stationaryAnchor: Pair<Double, Double>? = null
     private var stationarySinceMs: Long? = null
     private var stationaryCaptured = false
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var consecutiveAnomalies = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -84,6 +87,16 @@ class LocationForegroundService : Service() {
         stationaryAnchor = null
         stationarySinceMs = null
         stationaryCaptured = false
+        consecutiveAnomalies = 0
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (wakeLock == null) {
+                wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MapaCoordenadas:LocationWakeLock")?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            wakeLock?.acquire(24 * 60 * 60 * 1000L)
+        } catch (_: Exception) {}
         val wasRunning = running.getAndSet(true)
         writeStatus(running = true, error = "")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -101,8 +114,9 @@ class LocationForegroundService : Service() {
         }
 
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis(intervalMs)
-            .setMaxUpdateDelayMillis(intervalMs)
+            .setMinUpdateIntervalMillis((intervalMs / 2).coerceAtLeast(1000L))
+            .setMaxUpdateDelayMillis(0L)
+            .setMinUpdateDistanceMeters(0f)
             .setWaitForAccurateLocation(false)
             .build()
 
@@ -133,6 +147,13 @@ class LocationForegroundService : Service() {
         stationaryAnchor = null
         stationarySinceMs = null
         stationaryCaptured = false
+        consecutiveAnomalies = 0
+        try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Exception) {}
+        wakeLock = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         try {
             val manager = getSystemService(NotificationManager::class.java)
@@ -160,15 +181,23 @@ class LocationForegroundService : Service() {
         val stationaryElapsedSeconds = stationarySinceMs?.let { ((System.currentTimeMillis() - it) / 1000.0).coerceAtLeast(0.0) } ?: 0.0
         val stationaryAnchorDistance = stationaryAnchor?.let { distanceMeters(it.first, it.second, latitude, longitude) } ?: 0.0
         val stationaryDerivedSpeedKmh = if (stationaryElapsedSeconds > 0.0) stationaryAnchorDistance / stationaryElapsedSeconds * 3.6 else 0.0
-        val instantSpeedKmh = if (location.hasSpeed()) location.speed.toDouble() * 3.6 else if (stationaryMode) stationaryDerivedSpeedKmh else segmentSpeedKmh
+        val hasPrevious = previousLatitude != null && previousLongitude != null
+        val isStationaryDrift = hasPrevious && instantSpeedKmh < 1.5 && segmentDistance > 20.0 && (elapsedSeconds.isFinite() && elapsedSeconds < 60.0)
+
         if (stationaryMode && instantSpeedKmh > MAX_STATIONARY_SPEED_KMH) {
             updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
             return
         }
-        if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || (segmentDistance > 500.0 && segmentSpeedKmh > 100.0)) {
-            updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
-            showStatusNotification("ATIVA — ponto anômalo descartado")
-            return
+        if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || isStationaryDrift) {
+            consecutiveAnomalies++
+            if (consecutiveAnomalies < 3 || accuracy > MAX_ACCEPTED_ACCURACY_METERS) {
+                updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
+                showStatusNotification("ATIVA — ponto anômalo descartado")
+                return
+            }
+            consecutiveAnomalies = 0
+        } else {
+            consecutiveAnomalies = 0
         }
         val current = try { JSONArray(prefs.getString(KEY_PENDING, "[]")) } catch (_: Exception) { JSONArray() }
         val timestamp = timestamp()
@@ -316,6 +345,12 @@ class LocationForegroundService : Service() {
     override fun onDestroy() {
         if (running.getAndSet(false)) fusedClient.removeLocationUpdates(locationCallback)
         try {
+            wakeLock?.let {
+                if (it.isHeld) it.release()
+            }
+        } catch (_: Exception) {}
+        wakeLock = null
+        try {
             val manager = getSystemService(NotificationManager::class.java)
             manager?.cancel(NOTIFICATION_ID)
         } catch (_: Exception) {}
@@ -355,7 +390,7 @@ class LocationForegroundService : Service() {
         const val DEFAULT_INTERVAL_MS = 5000L
         const val MAX_PENDING = 10000
         const val MAX_ACCEPTED_SPEED_KMH = 180.0
-        const val MAX_ACCEPTED_ACCURACY_METERS = 150.0
+        const val MAX_ACCEPTED_ACCURACY_METERS = 50.0
         const val MAX_STATIONARY_SPEED_KMH = 2.5
     }
 }
