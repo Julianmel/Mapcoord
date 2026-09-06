@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -135,12 +136,32 @@ class MainActivity : Activity() {
         ContextCompat.startForegroundService(this, intent)
     }
 
+    private fun requestIgnoreBatteryOptimizationIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    try {
+                        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     private fun startPendingServiceIfReady() {
         val interval = pendingIntervalSeconds ?: return
         if (!hasForegroundLocationPermission()) return
         val stationaryWait = pendingStationaryWaitSeconds
         pendingIntervalSeconds = null
         pendingStationaryWaitSeconds = null
+        requestIgnoreBatteryOptimizationIfNeeded()
         startNativeService(interval, stationaryWait)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !hasBackgroundLocationPermission()) {
             Toast.makeText(this, "Ative 'Permitir o tempo todo' para manter o GPS em background.", Toast.LENGTH_LONG).show()
@@ -237,6 +258,15 @@ class MainActivity : Activity() {
         fun openBackgroundLocationSettings() = runOnUiThread { openBackgroundLocationSettingsPage() }
 
         @JavascriptInterface
+        fun requestIgnoreBatteryOptimizations() = runOnUiThread { requestIgnoreBatteryOptimizationIfNeeded() }
+
+        @JavascriptInterface
+        fun isIgnoringBatteryOptimizations(): Boolean {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            return powerManager?.isIgnoringBatteryOptimizations(packageName) ?: true
+        }
+
+        @JavascriptInterface
         fun getStatus(): String {
             val prefs = getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE)
             return "{\"running\":${prefs.getBoolean(LocationForegroundService.KEY_RUNNING, false)},\"error\":${JSONObjectEscaper.quote(prefs.getString(LocationForegroundService.KEY_ERROR, "") ?: "")},\"lastTimestamp\":${JSONObjectEscaper.quote(prefs.getString(LocationForegroundService.KEY_LAST_TIMESTAMP, "") ?: "")}}"
@@ -258,6 +288,7 @@ class MainActivity : Activity() {
                 put("bridge", true)
                 put("foregroundLocation", hasForegroundLocationPermission())
                 put("backgroundLocation", hasBackgroundLocationPermission())
+                put("batteryOptimizationIgnored", isIgnoringBatteryOptimizations())
                 put("notifications", NotificationManagerCompat.from(this@MainActivity).areNotificationsEnabled())
                 put("service", if (running) "active" else if (error.isNotBlank()) "error" else "stopped")
                 put("mode", mode)

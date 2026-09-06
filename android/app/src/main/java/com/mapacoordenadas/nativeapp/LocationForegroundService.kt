@@ -7,12 +7,18 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.os.Build
-import android.os.IBinder
-import android.os.PowerManager
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
+import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.Granularity
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
@@ -28,6 +34,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LocationForegroundService : Service() {
     private lateinit var fusedClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
+    private var locationManager: LocationManager? = null
+    private var rawGpsListener: LocationListener? = null
     private val running = AtomicBoolean(false)
     private var intervalMs = DEFAULT_INTERVAL_MS
     private var stationaryWaitMs: Long? = null
@@ -36,21 +44,27 @@ class LocationForegroundService : Service() {
     private var stationaryCaptured = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var consecutiveAnomalies = 0
+    private var lastStoredRealtimeMs = 0L
 
     override fun onCreate() {
         super.onCreate()
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 result.locations.forEach { location ->
-                    val waitMs = stationaryWaitMs
-                    if (waitMs == null) {
-                        storeLocation(location)
-                    } else {
-                        handleStationaryLocation(location, waitMs)
-                    }
+                    handleIncomingLocation(location)
                 }
             }
+        }
+        rawGpsListener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                handleIncomingLocation(location)
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
         }
         createNotificationChannel()
     }
@@ -88,6 +102,7 @@ class LocationForegroundService : Service() {
         stationarySinceMs = null
         stationaryCaptured = false
         consecutiveAnomalies = 0
+        lastStoredRealtimeMs = 0L
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
             if (wakeLock == null) {
@@ -111,17 +126,36 @@ class LocationForegroundService : Service() {
 
         if (wasRunning) {
             fusedClient.removeLocationUpdates(locationCallback)
+            rawGpsListener?.let { try { locationManager?.removeUpdates(it) } catch (_: Exception) {} }
         }
 
+        // 1. Hardware GNSS direto via framework LocationManager (evita throttling de background em tela apagada)
+        try {
+            rawGpsListener?.let { listener ->
+                if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
+                    locationManager?.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        intervalMs,
+                        0f,
+                        listener,
+                        Looper.getMainLooper(),
+                    )
+                }
+            }
+        } catch (_: SecurityException) {
+        } catch (_: Exception) {}
+
+        // 2. FusedLocationProviderClient (alta precisão e granularidade fina)
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis((intervalMs / 2).coerceAtLeast(1000L))
+            .setMinUpdateIntervalMillis((intervalMs / 2).coerceAtLeast(500L))
             .setMaxUpdateDelayMillis(0L)
             .setMinUpdateDistanceMeters(0f)
             .setWaitForAccurateLocation(false)
+            .setGranularity(Granularity.GRANULARITY_FINE)
             .build()
 
         try {
-            fusedClient.requestLocationUpdates(request, locationCallback, mainLooper)
+            fusedClient.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
                 .addOnFailureListener { error ->
                     val message = error.message ?: "falha ao solicitar atualizações GPS"
                     writeStatus(running = false, error = message)
@@ -138,7 +172,10 @@ class LocationForegroundService : Service() {
     }
 
     private fun stopTracking() {
-        if (running.getAndSet(false)) fusedClient.removeLocationUpdates(locationCallback)
+        if (running.getAndSet(false)) {
+            fusedClient.removeLocationUpdates(locationCallback)
+            rawGpsListener?.let { try { locationManager?.removeUpdates(it) } catch (_: Exception) {} }
+        }
         writeStatus(running = false, error = "")
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
             .putInt(KEY_STATIONARY_WAIT_SECONDS, 0)
@@ -148,6 +185,7 @@ class LocationForegroundService : Service() {
         stationarySinceMs = null
         stationaryCaptured = false
         consecutiveAnomalies = 0
+        lastStoredRealtimeMs = 0L
         try {
             wakeLock?.let {
                 if (it.isHeld) it.release()
@@ -165,7 +203,26 @@ class LocationForegroundService : Service() {
         stopSelf()
     }
 
-        private fun storeLocation(location: Location) {
+    private fun handleIncomingLocation(location: Location) {
+        if (!running.get()) return
+        val waitMs = stationaryWaitMs
+        if (waitMs == null) {
+            storeLocation(location)
+        } else {
+            handleStationaryLocation(location, waitMs)
+        }
+    }
+
+    private fun storeLocation(location: Location) {
+        val stationaryMode = stationaryWaitMs != null
+        if (!stationaryMode) {
+            val nowRealtime = SystemClock.elapsedRealtime()
+            val minGapMs = (intervalMs * 0.75).toLong().coerceAtLeast(600L)
+            if (lastStoredRealtimeMs > 0L && (nowRealtime - lastStoredRealtimeMs) < minGapMs) {
+                return
+            }
+        }
+
         val latitude = location.latitude
         val longitude = location.longitude
         val accuracy = location.accuracy
@@ -177,7 +234,6 @@ class LocationForegroundService : Service() {
         val elapsedSeconds = if (previousGpsTime > 0L && currentGpsTime > previousGpsTime) (currentGpsTime - previousGpsTime) / 1000.0 else Double.NaN
         val segmentDistance = if (previousLatitude != null && previousLongitude != null) distanceMeters(previousLatitude, previousLongitude, latitude, longitude) else 0.0
         val segmentSpeedKmh = if (elapsedSeconds.isFinite() && elapsedSeconds > 0.0) segmentDistance / elapsedSeconds * 3.6 else 0.0
-        val stationaryMode = stationaryWaitMs != null
         val stationaryElapsedSeconds = stationarySinceMs?.let { ((System.currentTimeMillis() - it) / 1000.0).coerceAtLeast(0.0) } ?: 0.0
         val stationaryAnchorDistance = stationaryAnchor?.let { distanceMeters(it.first, it.second, latitude, longitude) } ?: 0.0
         val stationaryDerivedSpeedKmh = if (stationaryElapsedSeconds > 0.0) stationaryAnchorDistance / stationaryElapsedSeconds * 3.6 else 0.0
@@ -191,7 +247,7 @@ class LocationForegroundService : Service() {
         }
         if (accuracy > MAX_ACCEPTED_ACCURACY_METERS || instantSpeedKmh < 0.0 || instantSpeedKmh > MAX_ACCEPTED_SPEED_KMH || segmentSpeedKmh > MAX_ACCEPTED_SPEED_KMH || isStationaryDrift) {
             consecutiveAnomalies++
-            if (consecutiveAnomalies < 3 || accuracy > MAX_ACCEPTED_ACCURACY_METERS) {
+            if (consecutiveAnomalies < 3) {
                 updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
                 showStatusNotification("ATIVA — ponto anômalo descartado")
                 return
@@ -200,6 +256,9 @@ class LocationForegroundService : Service() {
         } else {
             consecutiveAnomalies = 0
         }
+
+        lastStoredRealtimeMs = SystemClock.elapsedRealtime()
+
         val current = try { JSONArray(prefs.getString(KEY_PENDING, "[]")) } catch (_: Exception) { JSONArray() }
         val timestamp = timestamp()
         val item = JSONObject().apply {
@@ -212,7 +271,7 @@ class LocationForegroundService : Service() {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && location.hasSpeedAccuracy()) {
                 put("speedAccuracyKmh", (location.speedAccuracyMetersPerSecond * 3.6f).toDouble())
             }
-            put("gpsTimeMs", location.time)
+            put("gpsTimeMs", currentGpsTime)
             put("timestamp", timestamp)
             put("intervalSeconds", prefs.getInt(KEY_INTERVAL_SECONDS, (DEFAULT_INTERVAL_MS / 1000L).toInt()))
             put("mode", if (stationaryWaitMs != null) "stationary" else "interval")
@@ -344,7 +403,10 @@ class LocationForegroundService : Service() {
     }
 
     override fun onDestroy() {
-        if (running.getAndSet(false)) fusedClient.removeLocationUpdates(locationCallback)
+        if (running.getAndSet(false)) {
+            fusedClient.removeLocationUpdates(locationCallback)
+            rawGpsListener?.let { try { locationManager?.removeUpdates(it) } catch (_: Exception) {} }
+        }
         try {
             wakeLock?.let {
                 if (it.isHeld) it.release()
@@ -391,7 +453,7 @@ class LocationForegroundService : Service() {
         const val DEFAULT_INTERVAL_MS = 5000L
         const val MAX_PENDING = 10000
         const val MAX_ACCEPTED_SPEED_KMH = 180.0
-        const val MAX_ACCEPTED_ACCURACY_METERS = 50.0
+        const val MAX_ACCEPTED_ACCURACY_METERS = 80.0
         const val MAX_STATIONARY_SPEED_KMH = 2.5
     }
 }
