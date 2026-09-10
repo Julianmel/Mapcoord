@@ -434,23 +434,28 @@ export default function Home() {
     setCoords((prev) => {
       const updated = [...prev];
       if (updated[pointIndex]) {
+        const prevObs = updated[pointIndex].observation || "";
+        const newObs = prevObs
+          ? (prevObs.includes("Ponto corrigido manualmente") ? prevObs : `${prevObs} - Ponto corrigido manualmente`)
+          : "Ponto corrigido manualmente";
         updated[pointIndex] = {
           ...updated[pointIndex],
           lat: newLat,
           lng: newLng,
+          observation: newObs,
         };
       }
       return updated;
     });
 
     const currentText = inputTextRef.current;
-    const updatedText = updateCoordInText(currentText, pointIndex, newLat, newLng);
+    const updatedText = updateCoordInText(currentText, pointIndex, newLat, newLng, "Ponto corrigido manualmente");
     inputTextRef.current = updatedText;
     setInputText(updatedText);
     saveData(updatedText);
     setStatus({
       type: "success",
-      message: `Ponto #${pointIndex + 1} editado para ${newLat.toFixed(6)}, ${newLng.toFixed(6)}.`,
+      message: `Ponto #${pointIndex + 1} corrigido manualmente para ${newLat.toFixed(6)}, ${newLng.toFixed(6)}.`,
     });
   }, []);
   const [colors, setColors] = useState<ColorConfig>(loadColors);
@@ -1207,10 +1212,16 @@ export default function Home() {
         circle.setLatLng(newPos);
         handlePointDragged(index, newPos.lat, newPos.lng);
 
+        const prevObs = coord.observation || "";
+        const updatedObs = prevObs
+          ? (prevObs.includes("Ponto corrigido manualmente") ? prevObs : `${prevObs} - Ponto corrigido manualmente`)
+          : "Ponto corrigido manualmente";
+
         const updatedCoord: ParsedCoord = {
           ...coord,
           lat: newPos.lat,
           lng: newPos.lng,
+          observation: updatedObs,
         };
 
         const updatedPopup = buildPointPopupHtml({

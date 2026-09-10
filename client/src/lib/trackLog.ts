@@ -169,14 +169,49 @@ export function filterNativePendingLocations<T extends PendingLocationLike>(
 }
 
 /**
+ * Atualiza o prefixo da linha (antes da coordenada), inserindo ou complementando
+ * a observação com o texto informado (ex.: "Ponto corrigido manualmente").
+ */
+export function updatePrefixObservation(prefix: string, newObservation: string): string {
+  // Caso com timestamp: ex: "; [20260828120000] Coleta #1, " ou "[20260828120000], "
+  const tsMatch = prefix.match(/^(\s*;?\s*\[\d{14}\])\s*(.*?)([,\s;]*)$/);
+  if (tsMatch) {
+    const leaderWithTs = tsMatch[1];
+    const existingObs = tsMatch[2].replace(/^[,\s;]+|[,\s;]+$/g, "").trim();
+    let finalObs = "";
+    if (existingObs) {
+      finalObs = existingObs.includes(newObservation) ? existingObs : `${existingObs} - ${newObservation}`;
+    } else {
+      finalObs = newObservation;
+    }
+    return `${leaderWithTs} ${finalObs}, `;
+  }
+
+  // Caso sem timestamp, mas com texto de observação antes da coordenada: ex: "Ponto 1, "
+  const noTsMatch = prefix.match(/^(\s*;?\s*)(.*?)([,\s;]+)$/);
+  if (noTsMatch) {
+    const leader = noTsMatch[1];
+    const existingObs = noTsMatch[2].replace(/^[,\s;]+|[,\s;]+$/g, "").trim();
+    if (existingObs) {
+      const finalObs = existingObs.includes(newObservation) ? existingObs : `${existingObs} - ${newObservation}`;
+      return `${leader}${finalObs}, `;
+    }
+  }
+
+  return prefix;
+}
+
+/**
  * Atualiza a latitude e longitude do ponto com o índice especificado no texto do log,
  * preservando timestamps, observações, metadados, formatação e quebras de linha.
+ * Se informado newObservation, adiciona ou atualiza a observação do ponto.
  */
 export function updateCoordInText(
   currentText: string,
   pointIndex: number,
   newLat: number,
   newLng: number,
+  newObservation?: string,
 ): string {
   const newline = currentText.includes("\r\n") ? "\r\n" : "\n";
   const lines = currentText.split(/\r?\n/);
@@ -187,7 +222,7 @@ export function updateCoordInText(
     const clean = line.replace(/^;\s*/, "").replace(/;\s*$/, "").trim();
     if (!clean || isLogHeaderLine(clean)) return line;
 
-    // Suporta uma ou mais coordenadas por linha (tanto logs com timestamp quanto listas CSV/separadas por ;)
+    const hasTimestamp = /\[\d{14}\]/.test(line);
     const regex = /(-?\d{1,3}\.\d+)\s*[,;\t]\s*(-?\d{1,3}\.\d+)/g;
     let match: RegExpExecArray | null;
     let lastIndex = 0;
@@ -200,12 +235,22 @@ export function updateCoordInText(
       if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
         if (coordCount === pointIndex) {
           lineMatched = true;
-          modifiedLine += line.slice(lastIndex, match.index) + `${newLat.toFixed(6)},${newLng.toFixed(6)}`;
+          let prefix = line.slice(lastIndex, match.index);
+          if (newObservation) {
+            prefix = updatePrefixObservation(prefix, newObservation);
+          }
+          modifiedLine += prefix + `${newLat.toFixed(6)},${newLng.toFixed(6)}`;
           lastIndex = match.index + match[0].length;
           coordCount++;
           didUpdate = true;
         } else {
           coordCount++;
+        }
+
+        // Se a linha possui timestamp, ela contém apenas uma coordenada geográfica principal;
+        // os números restantes na linha são metadados (dir, alt, speed, acc, dist, time).
+        if (hasTimestamp) {
+          break;
         }
       }
     }

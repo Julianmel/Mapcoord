@@ -123,4 +123,13 @@ const firstPoint = { lat: -16.74305, lng: -49.08752, timestampMs: timestampToMil
     expect(updated).toContain("-23.551111,-46.632222");
     expect(updated).toContain("-23.560000, -46.640000");
   });
+
+  it("inserts 'Ponto corrigido manualmente' into observation when dragged", () => {
+    const text = "[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;\r\n; [20260828120000] Coleta #1, -16.743050,-49.087520, 90.0, 700.0, 10.0, 1.0, 5.0, 0.0, 0.0;\r\n; [20260828120005] Coleta #2, -16.743100,-49.087600, 95.0, 701.0, 12.0, 1.0, 5.0, 15.0, 5.0;\r\n";
+    const updated = updateCoordInText(text, 1, -16.743555, -49.088888, "Ponto corrigido manualmente");
+
+    expect(updated).toContain("-16.743555,-49.088888");
+    expect(updated).toContain("[20260828120005] Coleta #2 - Ponto corrigido manualmente, -16.743555,-49.088888");
+    expect(updated).toContain("[20260828120000] Coleta #1, -16.743050,-49.087520");
+  });
 });
