@@ -167,7 +167,8 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Ative 'Permitir o tempo todo' para manter o GPS em background.", Toast.LENGTH_LONG).show()
             webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('native-location-background-permission-needed'))", null)
         }
-        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('native-location-active'))", null)
+        val mode = if (stationaryWait != null) "stationary" else "interval"
+        webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('native-location-active', { detail: { mode: '$mode', interval: $interval } }))", null)
     }
 
     private fun openBackgroundLocationSettingsPage() {
@@ -180,8 +181,15 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun start(intervalSeconds: Int) {
             runOnUiThread {
+                val interval = intervalSeconds.coerceAtLeast(1)
                 pendingStationaryWaitSeconds = null
-                pendingIntervalSeconds = intervalSeconds.coerceAtLeast(1)
+                pendingIntervalSeconds = interval
+                getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(LocationForegroundService.KEY_RUNNING, true)
+                    .putString(LocationForegroundService.KEY_ERROR, "")
+                    .putInt(LocationForegroundService.KEY_INTERVAL_SECONDS, interval)
+                    .putInt(LocationForegroundService.KEY_STATIONARY_WAIT_SECONDS, 0)
+                    .apply()
                 if (ensureLocationPermissions()) startPendingServiceIfReady()
             }
         }
@@ -189,8 +197,15 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun startStationary(waitSeconds: Int) {
             runOnUiThread {
-                pendingStationaryWaitSeconds = waitSeconds.coerceAtLeast(5)
+                val wait = waitSeconds.coerceAtLeast(5)
+                pendingStationaryWaitSeconds = wait
                 pendingIntervalSeconds = 1
+                getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(LocationForegroundService.KEY_RUNNING, true)
+                    .putString(LocationForegroundService.KEY_ERROR, "")
+                    .putInt(LocationForegroundService.KEY_INTERVAL_SECONDS, 1)
+                    .putInt(LocationForegroundService.KEY_STATIONARY_WAIT_SECONDS, wait)
+                    .apply()
                 if (ensureLocationPermissions()) startPendingServiceIfReady()
             }
         }
@@ -198,6 +213,9 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun stop() {
             runOnUiThread {
+                getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE).edit()
+                    .putBoolean(LocationForegroundService.KEY_RUNNING, false)
+                    .apply()
                 val intent = Intent(this@MainActivity, LocationForegroundService::class.java)
                     .setAction(LocationForegroundService.ACTION_STOP)
                 startService(intent)

@@ -150,7 +150,7 @@ class LocationForegroundService : Service() {
             .setMinUpdateIntervalMillis((intervalMs / 2).coerceAtLeast(500L))
             .setMaxUpdateDelayMillis(0L)
             .setMinUpdateDistanceMeters(0f)
-            .setWaitForAccurateLocation(false)
+            .setWaitForAccurateLocation(true)
             .setGranularity(Granularity.GRANULARITY_FINE)
             .build()
 
@@ -239,7 +239,7 @@ class LocationForegroundService : Service() {
         val stationaryDerivedSpeedKmh = if (stationaryElapsedSeconds > 0.0) stationaryAnchorDistance / stationaryElapsedSeconds * 3.6 else 0.0
         val instantSpeedKmh = if (location.hasSpeed()) location.speed.toDouble() * 3.6 else if (stationaryMode) stationaryDerivedSpeedKmh else segmentSpeedKmh
         val hasPrevious = previousLatitude != null && previousLongitude != null
-        val isStationaryDrift = hasPrevious && instantSpeedKmh < 1.5 && segmentDistance > 20.0 && (elapsedSeconds.isFinite() && elapsedSeconds < 60.0)
+        val isStationaryDrift = hasPrevious && instantSpeedKmh < 1.5 && segmentDistance > 50.0 && (elapsedSeconds.isFinite() && elapsedSeconds < 20.0)
 
         if (stationaryMode && instantSpeedKmh > MAX_STATIONARY_SPEED_KMH) {
             updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
@@ -452,8 +452,8 @@ class LocationForegroundService : Service() {
         const val NOTIFICATION_ID = 4101
         const val DEFAULT_INTERVAL_MS = 5000L
         const val MAX_PENDING = 10000
-        const val MAX_ACCEPTED_SPEED_KMH = 180.0
-        const val MAX_ACCEPTED_ACCURACY_METERS = 80.0
+        const val MAX_ACCEPTED_SPEED_KMH = 220.0
+        const val MAX_ACCEPTED_ACCURACY_METERS = 85.0
         const val MAX_STATIONARY_SPEED_KMH = 2.5
     }
 }

@@ -18,10 +18,10 @@ import L from "leaflet";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
-import { MapPin, Trash2, Navigation, CheckCircle2, XCircle, Palette, RotateCcw, X, Crosshair, Loader2, Play, Square, Download, Maximize2, Minimize2, Save, RefreshCcw, Clock, Route, Sparkles, Focus } from "lucide-react";
+import { MapPin, Trash2, Navigation, CheckCircle2, XCircle, Palette, RotateCcw, X, Crosshair, Loader2, Play, Square, Download, Maximize2, Minimize2, Save, RefreshCcw, Clock, Route, Sparkles, Focus, BarChart3 } from "lucide-react";
 import { useIsMobile } from "@/hooks/useMobile";
-import { AIChatBox, type Message } from "@/components/AIChatBox";
-import { answerDisplacementQuestion } from "@/lib/trackAnalysis";
+import { TrackStatisticsModal } from "@/components/TrackStatisticsModal";
+import { APP_VERSION } from "@/version";
 import {
   appendLogRecord,
   distanceMeters,
@@ -32,6 +32,7 @@ import {
   formatSegmentMetadata,
   isLogHeaderLine,
   timestampToMillis,
+  updateCoordInText,
 } from "@/lib/trackLog";
 
 interface ParsedCoord {
@@ -244,73 +245,56 @@ function saveData(text: string) {
 
 /**
  * Cria o ícone DivIcon Leaflet para o marcador numérico.
- * O ícone é um círculo SVG com as cores configuradas e número centralizado.
+ * Usa um container de toque amplo (38x38px) com ponto de ancoragem perfeitamente centralizado,
+ * permitindo segurar e arrastar o ponto com precisão e facilidade tanto no mouse quanto no celular.
  */
 function createMarkerIcon(
   index: number,
   colors: ColorConfig,
   variant: "normal" | "start" | "end" | "waypoint" = "normal"
 ): L.DivIcon {
+  const boxSize = 38;
+  const half = boxSize / 2;
+
+  let innerSvg = "";
+
   if (variant === "start") {
-    const size = 14;
-    const half = size / 2;
-    return L.divIcon({
-      className: "custom-map-marker",
-      html: `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-        <circle cx="${half}" cy="${half}" r="${half - 1}" fill="#16a34a" stroke="#ffffff" stroke-width="1.5"/>
-        <circle cx="${half}" cy="${half}" r="2.5" fill="#ffffff"/>
-      </svg>`.trim(),
-      iconSize: [size, size],
-      iconAnchor: [half, half],
-    });
+    innerSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+        <circle cx="9" cy="9" r="8" fill="#16a34a" stroke="#ffffff" stroke-width="2"/>
+        <circle cx="9" cy="9" r="3" fill="#ffffff"/>
+      </svg>`;
+  } else if (variant === "end") {
+    innerSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+        <circle cx="9" cy="9" r="8" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
+        <circle cx="9" cy="9" r="3" fill="#ffffff"/>
+      </svg>`;
+  } else if (variant === "waypoint") {
+    innerSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+        <circle cx="8" cy="8" r="7" fill="#f59e0b" stroke="#ffffff" stroke-width="1.5"/>
+        <text x="8" y="8" text-anchor="middle" dominant-baseline="central" fill="#ffffff" font-family="'JetBrains Mono',monospace" font-size="8" font-weight="700">${index + 1}</text>
+      </svg>`;
+  } else {
+    // Marcador normal (círculo com cores configuradas e número perfeitamente legível)
+    innerSvg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
+        <circle cx="10" cy="10" r="9" fill="${colors.numberCircleColor}" stroke="#ffffff" stroke-width="1.5"/>
+        <text x="10" y="10" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="8.5" font-weight="700">${index + 1}</text>
+      </svg>`;
   }
 
-  if (variant === "end") {
-    const size = 14;
-    const half = size / 2;
-    return L.divIcon({
-      className: "custom-map-marker",
-      html: `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-        <circle cx="${half}" cy="${half}" r="${half - 1}" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
-        <circle cx="${half}" cy="${half}" r="2.5" fill="#ffffff"/>
-      </svg>`.trim(),
-      iconSize: [size, size],
-      iconAnchor: [half, half],
-    });
-  }
-
-  if (variant === "waypoint") {
-    const size = 10;
-    const half = size / 2;
-    return L.divIcon({
-      className: "custom-map-marker",
-      html: `
-      <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-        <circle cx="${half}" cy="${half}" r="${half - 1}" fill="#f59e0b" stroke="#ffffff" stroke-width="1"/>
-      </svg>`.trim(),
-      iconSize: [size, size],
-      iconAnchor: [half, half],
-    });
-  }
-
-  // Marcador normal (compacto, 13px)
-  const size = 13;
-  const half = size / 2;
-  const r = half - 1;
-
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-      <circle cx="${half}" cy="${half}" r="${r}" fill="${colors.numberCircleColor}" stroke="${colors.numberCircleColor}" stroke-width="1"/>
-      <text x="${half}" y="${half}" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="7" font-weight="700">${index + 1}</text>
-    </svg>
+  const html = `
+    <div class="marker-touch-hitbox" style="width:${boxSize}px;height:${boxSize}px;display:flex;align-items:center;justify-content:center;touch-action:none;cursor:grab;">
+      ${innerSvg.trim()}
+    </div>
   `.trim();
 
   return L.divIcon({
     className: "custom-map-marker",
-    html: svg,
-    iconSize: [size, size],
+    html,
+    iconSize: [boxSize, boxSize],
     iconAnchor: [half, half],
   });
 }
@@ -324,6 +308,8 @@ export default function Home() {
   let { user, loading, error, isAuthenticated, logout } = useAuth();
 
   const [inputText, setInputText] = useState("");
+  const inputTextRef = useRef(inputText);
+  useEffect(() => { inputTextRef.current = inputText; }, [inputText]);
   const [coords, setCoords] = useState<ParsedCoord[]>([]);
   const [radius, setRadius] = useState(3); // metros
   const [status, setStatus] = useState<{ type: "success" | "error" | "info" | "idle"; message: string }>({
@@ -331,6 +317,35 @@ export default function Home() {
     message: "",
   });
   const [activeCircles, setActiveCircles] = useState<CircleRef[]>([]);
+  const activeCirclesRef = useRef(activeCircles);
+  useEffect(() => { activeCirclesRef.current = activeCircles; }, [activeCircles]);
+  const startingNativeRef = useRef<boolean>(false);
+  const isEditingPointRef = useRef<boolean>(false);
+
+  const handlePointDragged = useCallback((pointIndex: number, newLat: number, newLng: number) => {
+    isEditingPointRef.current = true;
+    setCoords((prev) => {
+      const updated = [...prev];
+      if (updated[pointIndex]) {
+        updated[pointIndex] = {
+          ...updated[pointIndex],
+          lat: newLat,
+          lng: newLng,
+        };
+      }
+      return updated;
+    });
+
+    const currentText = inputTextRef.current;
+    const updatedText = updateCoordInText(currentText, pointIndex, newLat, newLng);
+    inputTextRef.current = updatedText;
+    setInputText(updatedText);
+    saveData(updatedText);
+    setStatus({
+      type: "success",
+      message: `Ponto #${pointIndex + 1} editado para ${newLat.toFixed(6)}, ${newLng.toFixed(6)}.`,
+    });
+  }, []);
   const [colors, setColors] = useState<ColorConfig>(loadColors);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [selectedElement, setSelectedElement] = useState<keyof ColorConfig | null>(null);
@@ -376,9 +391,7 @@ export default function Home() {
   const [showLine, setShowLine] = useState(false);
   const polylineRef = useRef<L.Polyline | null>(null);
   const [showTrackAnalysis, setShowTrackAnalysis] = useState(false);
-  const [analysisMessages, setAnalysisMessages] = useState<Message[]>([]);
   const [nativeDiagnostics, setNativeDiagnostics] = useState<NativeDiagnostics | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const [mounted, setMounted] = useState(false);
 
@@ -797,9 +810,10 @@ export default function Home() {
     }
   }, [autoLoadEnabled, parseCoordenadas]);
 
-  // Escuta evento disparado quando a captura é parada via notificação Android
+  // Escuta eventos disparados pelo módulo Android nativo (ativo, parado, retomado)
   useEffect(() => {
     const handleNativeStopped = () => {
+      startingNativeRef.current = false;
       setContinuousCapture(false);
       setStationaryCapture(false);
       if (continuousIntervalRef.current) {
@@ -820,14 +834,67 @@ export default function Home() {
       }
       continuousStateRef.current = null;
       saveContinuousState(null);
-      setStatus({ type: "info", message: "Captura interrompida via notificação." });
+      setStatus({ type: "info", message: "Captura interrompida via notificação/sistema." });
+    };
+
+    const handleNativeActive = (event: Event) => {
+      startingNativeRef.current = false;
+      const customEvent = event as CustomEvent<{ mode?: string; interval?: number }>;
+      const mode = customEvent.detail?.mode;
+      const interval = customEvent.detail?.interval;
+
+      if (mode === "stationary") {
+        setStationaryCapture(true);
+        setContinuousCapture(false);
+      } else {
+        setContinuousCapture(true);
+        setStationaryCapture(false);
+        if (interval && Number.isFinite(interval) && interval > 0) {
+          setCaptureInterval(interval);
+          captureIntervalRef2.current = interval;
+        }
+      }
+      setStatus({ type: "success", message: "Captura GPS nativa ATIVA em background." });
+    };
+
+    const handleNativeResumed = () => {
+      importNativePendingLocations();
+      const bridge = getNativeGpsBridge();
+      if (bridge) {
+        try {
+          const raw = bridge.getDiagnostics?.();
+          if (raw) {
+            const diag = JSON.parse(raw) as NativeDiagnostics;
+            setNativeDiagnostics(diag);
+            if (diag.service === "active") {
+              if (diag.mode === "stationary") {
+                setStationaryCapture(true);
+                setContinuousCapture(false);
+              } else {
+                setContinuousCapture(true);
+                setStationaryCapture(false);
+                if (diag.intervalSeconds > 0) {
+                  setCaptureInterval(diag.intervalSeconds);
+                  captureIntervalRef2.current = diag.intervalSeconds;
+                }
+              }
+            }
+          }
+        } catch {}
+      }
     };
 
     window.addEventListener("native-location-stopped", handleNativeStopped);
-    return () => window.removeEventListener("native-location-stopped", handleNativeStopped);
-  }, []);
+    window.addEventListener("native-location-active", handleNativeActive);
+    window.addEventListener("native-location-resumed", handleNativeResumed);
+    return () => {
+      window.removeEventListener("native-location-stopped", handleNativeStopped);
+      window.removeEventListener("native-location-active", handleNativeActive);
+      window.removeEventListener("native-location-resumed", handleNativeResumed);
+    };
+  }, [importNativePendingLocations]);
 
-  // Mantém o diagnóstico Android visível e atualizado enquanto o WebView está aberto.
+  // Mantém o diagnóstico Android visível e sincroniza o estado da captura contínua
   useEffect(() => {
     const bridge = getNativeGpsBridge();
     if (!bridge) {
@@ -840,8 +907,22 @@ export default function Home() {
         if (raw) {
           const diag = JSON.parse(raw) as NativeDiagnostics;
           setNativeDiagnostics(diag);
-          // Se o serviço nativo parou pela notificação, sincroniza a UI do app imediatamente
-          if (diag.service === "stopped") {
+
+          // Sincroniza o status do botão quando o serviço está ativo no Android
+          if (diag.service === "active") {
+            if (diag.mode === "stationary") {
+              setStationaryCapture(true);
+              setContinuousCapture(false);
+            } else {
+              setContinuousCapture(true);
+              setStationaryCapture(false);
+              if (diag.intervalSeconds > 0) {
+                setCaptureInterval(diag.intervalSeconds);
+                captureIntervalRef2.current = diag.intervalSeconds;
+              }
+            }
+          } else if (diag.service === "stopped" && !startingNativeRef.current) {
+            // Se o serviço nativo parou e não estamos na janela de início, desativa a UI
             setContinuousCapture(prev => {
               if (prev) {
                 continuousStateRef.current = null;
@@ -928,47 +1009,87 @@ export default function Home() {
         fillOpacity: 0.3,
         weight: 1.5,
         opacity: 1.0,
+        interactive: false, // Círculo visual: não captura cliques/toques, deixando os marcadores e o mapa totalmente livres
       });
 
-      // No modo "Traçar linha", NÃO adicionamos círculos de raio ao mapa
+      // No modo "Traçar linha", NÃO adicionamos círculos de raio ao mapa para manter a rota limpa
       if (!showLine) {
         circle.addTo(map);
       }
 
       const isFirst = index === 0;
       const isLast = index === coordsList.length - 1;
-      const hasCustomObs = Boolean(coord.observation && !coord.observation.startsWith("Coleta #"));
 
-      // No modo "Traçar linha", adiciona marcador apenas no Início, no Fim e em pontos com anotação manual
-      // Isso impede poluir a linha com centenas de círculos colados
-      const shouldRenderMarker = !showLine || isFirst || isLast || hasCustomObs;
+      // Todos os pontos agora possuem marcador renderizado e reposicionável por arrasto
+      const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "waypoint") : "normal";
+      const icon = createMarkerIcon(index, colors, variant);
 
-      let marker: L.Marker;
-      if (shouldRenderMarker) {
-        const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "waypoint") : "normal";
-        const icon = createMarkerIcon(index, colors, variant);
-        marker = L.marker(center, { icon });
-        marker.addTo(map);
+      // Permite segurar e arrastar qualquer ponto para edição direta sobre o mapa
+      const marker = L.marker(center, {
+        icon,
+        draggable: true,
+        autoPan: true,
+      });
 
-        const title = isFirst ? "Início do Percurso" : isLast ? "Fim / Ponto Atual" : `Ponto ${index + 1}`;
-        const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
-          <strong style="color: ${isFirst ? '#16a34a' : isLast ? '#dc2626' : '#0284c7'};">${title}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
-          Lat: ${coord.lat.toFixed(6)}<br/>
-          Lng: ${coord.lng.toFixed(6)}
-        </div>`;
+      marker.addTo(map);
 
-        marker.bindPopup(popupContent);
-      } else {
-        const icon = createMarkerIcon(index, colors, "normal");
-        marker = L.marker(center, { icon });
-      }
-
-      const popupContentCircle = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
-        <strong style="color: #0284c7;">Ponto ${index + 1}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
+      const title = isFirst ? "Início do Percurso" : isLast ? "Fim / Ponto Atual" : `Ponto ${index + 1}`;
+      const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
+        <strong style="color: ${isFirst ? '#16a34a' : isLast ? '#dc2626' : '#0284c7'};">${title}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
         Lat: ${coord.lat.toFixed(6)}<br/>
-        Lng: ${coord.lng.toFixed(6)}
+        Lng: ${coord.lng.toFixed(6)}<br/>
+        <span style="display:inline-block; margin-top:4px; font-size:10px; color:#64748b;">🖐️ Segure e arraste para reposicionar</span>
       </div>`;
-      circle.bindPopup(popupContentCircle);
+
+      marker.bindPopup(popupContent);
+
+      // Ao iniciar o arrasto, desabilita a movimentação do mapa para não disputar o gesto com o dedo/mouse
+      marker.on("dragstart", () => {
+        map.dragging.disable();
+        if (map.touchZoom) map.touchZoom.disable();
+        marker.closePopup();
+        (marker as any)._isDragging = true;
+      });
+
+      // Ao arrastar, move o círculo de raio e atualiza os segmentos do traçado em tempo real
+      marker.on("drag", (e: L.LeafletEvent) => {
+        const newPos = (e.target as L.Marker).getLatLng();
+        circle.setLatLng(newPos);
+        if (polylineRef.current) {
+          const latLngsList = (polylineRef.current.getLatLngs() as L.LatLng[]).slice();
+          if (latLngsList[index]) {
+            latLngsList[index] = newPos;
+            polylineRef.current.setLatLngs(latLngsList);
+          }
+        }
+      });
+
+      // Ao soltar o ponto, reabilita o mapa, persiste as novas coordenadas e atualiza o popup
+      marker.on("dragend", (e: L.LeafletEvent) => {
+        map.dragging.enable();
+        if (map.touchZoom) map.touchZoom.enable();
+        const newPos = (e.target as L.Marker).getLatLng();
+        circle.setLatLng(newPos);
+        handlePointDragged(index, newPos.lat, newPos.lng);
+
+        const updatedPopup = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
+          <strong style="color: ${isFirst ? '#16a34a' : isLast ? '#dc2626' : '#0284c7'};">${title}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
+          Lat: ${newPos.lat.toFixed(6)}<br/>
+          Lng: ${newPos.lng.toFixed(6)}<br/>
+          <span style="display:inline-block; margin-top:4px; font-size:10px; color:#16a34a; font-weight:600;">✓ Posição atualizada manualmente</span>
+        </div>`;
+        marker.setPopupContent(updatedPopup);
+
+        setTimeout(() => {
+          (marker as any)._isDragging = false;
+        }, 250);
+      });
+
+      marker.on("click", (e: L.LeafletEvent) => {
+        if ((marker as any)._isDragging) {
+          L.DomEvent.stopPropagation(e);
+        }
+      });
 
       newCircles.push({ circle, marker, center });
     });
@@ -1018,20 +1139,15 @@ export default function Home() {
         map.setView([latest.lat, latest.lng], 16);
       }
     }
-  }, [radius, colors, showLine, autoLoadEnabled]);
-
-  // Auto-save e auto-update do mapa
-  // Refs para evitar re-renders desnecessários no auto-save
-  const inputTextRef = useRef(inputText);
-  const activeCirclesRef = useRef(activeCircles);
-
-  // Sincronizar refs com estado
-  useEffect(() => { inputTextRef.current = inputText; }, [inputText]);
-  useEffect(() => { activeCirclesRef.current = activeCircles; }, [activeCircles]);
+  }, [radius, colors, showLine, autoLoadEnabled, handlePointDragged]);
 
   // Quando habilitado, qualquer registro novo atualiza imediatamente o estado e os marcadores do mapa.
   useEffect(() => {
     if (!autoLoadEnabled || !dataLoaded) return;
+    if (isEditingPointRef.current) {
+      isEditingPointRef.current = false;
+      return;
+    }
     const parsed = parseCoordenadas(inputText);
     setCoords(parsed);
     const isNewPointAdded = parsed.length > prevCoordsCountRef.current && prevCoordsCountRef.current > 0;
@@ -1161,6 +1277,8 @@ export default function Home() {
     setStationaryCapture(true);
     const nativeBridge = getNativeGpsBridge();
     if (nativeBridge?.startStationary) {
+      startingNativeRef.current = true;
+      setTimeout(() => { startingNativeRef.current = false; }, 3500);
       nativeBridge.startStationary(waitSeconds);
       setStatus({ type: "success", message: `Coleta nativa de pausas ativada: registra após ${waitSeconds}s sem deslocamento, inclusive em background.` });
       return;
@@ -1328,7 +1446,7 @@ export default function Home() {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement;
-      if (target.closest('.leaflet-control, .leaflet-popup, .custom-map-marker')) return;
+      if (target.closest('.leaflet-control, .leaflet-popup, .custom-map-marker, .marker-touch-hitbox, .leaflet-marker-icon')) return;
 
       isPressing = true;
       cancelled = false;
@@ -1372,7 +1490,7 @@ export default function Home() {
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
       const target = e.target as HTMLElement;
-      if (target.closest('.leaflet-control, .leaflet-popup, .custom-map-marker')) return;
+      if (target.closest('.leaflet-control, .leaflet-popup, .custom-map-marker, .marker-touch-hitbox, .leaflet-marker-icon')) return;
 
       isPressing = true;
       cancelled = false;
@@ -1428,26 +1546,6 @@ export default function Home() {
       mapDiv.removeEventListener("touchmove", onTouchMove);
     };
   }, []);
-
-  const handleAskTrack = useCallback((question: string) => {
-    const data = inputText.trim();
-    if (!data) {
-      setAnalysisMessages(previous => [...previous, { role: "assistant", content: "Ainda não há coordenadas na área de dados para analisar." }]);
-      return;
-    }
-    setAnalysisMessages(previous => [...previous, { role: "user", content: question }]);
-    setIsAnalyzing(true);
-    setTimeout(() => {
-      try {
-        const answer = answerDisplacementQuestion(question, data);
-        setAnalysisMessages(previous => [...previous, { role: "assistant", content: answer }]);
-      } catch (err: any) {
-        setAnalysisMessages(previous => [...previous, { role: "assistant", content: `Não foi possível analisar os dados: ${err?.message || "erro ao processar métricas"}` }]);
-      } finally {
-        setIsAnalyzing(false);
-      }
-    }, 150);
-  }, [inputText]);
 
   const handleLimpar = useCallback(() => {
     if (stationaryCapture) {
@@ -1569,9 +1667,14 @@ export default function Home() {
           alt="Logo"
           className="w-7 h-7"
         />
-        <h1 className="min-w-0 flex-1 truncate font-display font-semibold text-base text-foreground tracking-tight">
-          Mapa de Coordenadas
-        </h1>
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <h1 className="truncate font-display font-semibold text-base text-foreground tracking-tight">
+            Mapa de Coordenadas
+          </h1>
+          <span className="shrink-0 px-2 py-0.5 text-[10px] font-mono font-bold bg-cyan-400/10 border border-cyan-400/30 text-cyan-400 rounded-full">
+            v{APP_VERSION}
+          </span>
+        </div>
         {coords.length > 0 && (
           <span className="text-xs font-mono text-muted-foreground ml-auto">
             {coords.length} ponto{coords.length !== 1 ? "s" : ""}
@@ -1703,6 +1806,8 @@ export default function Home() {
                   });
 
                   if (nativeBridge) {
+                    startingNativeRef.current = true;
+                    setTimeout(() => { startingNativeRef.current = false; }, 3500);
                     nativeBridge.start(seconds);
                     return;
                   }
@@ -1736,8 +1841,7 @@ export default function Home() {
                     setInputText((prev) => appendLogRecord(prev, novaCoord));
                   };
 
-                  // Intervalo PRINCIPAL: a cada N segundos, captura a posição com timeout curto
-                  // Se o GPS não responder a tempo, usa a última posição conhecida
+                  // Intervalo PRINCIPAL: a cada N segundos, obtém a posição precisa
                   const doCapture = () => {
                     lastCaptureTimeRef.current = Date.now();
                     // Atualizar estado persistente a cada captura
@@ -1746,50 +1850,21 @@ export default function Home() {
                       continuousStateRef.current.sequenceCount = sequenceCounterRef.current;
                       saveContinuousState(continuousStateRef.current);
                     }
-                    
-                    // Timeout para o GPS - se não responder em 2s, usa última posição
-                    let resolved = false;
-                    const timeoutId = setTimeout(() => {
-                      if (!resolved) {
-                        resolved = true;
-                        if (lastKnownPositionRef.current) {
-                          recordCapture(lastKnownPositionRef.current, getTimestamp());
-                        } else {
-                          // Sem posição conhecida - tentar sem timeout curto
-                          navigator.geolocation.getCurrentPosition(
-                            (pos) => {
-                              lastKnownPositionRef.current = pos;
-                              recordCapture(pos, getTimestamp());
-                            },
-                            () => {
-                              // GPS completamente indisponível - registrar com zeros e mostrar erro
-                              setStatus({ type: "error", message: "GPS indisponível. Verifique as permissões de localização." });
-                            },
-                            { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-                          );
-                        }
-                      }
-                    }, 2000);
 
                     navigator.geolocation.getCurrentPosition(
                       (pos) => {
-                        if (resolved) return;
-                        resolved = true;
-                        clearTimeout(timeoutId);
                         lastKnownPositionRef.current = pos;
                         recordCapture(pos, getTimestamp());
                       },
                       () => {
-                        // GPS falhou - usar última posição conhecida
-                        if (!resolved) {
-                          resolved = true;
-                          clearTimeout(timeoutId);
-                          if (lastKnownPositionRef.current) {
-                            recordCapture(lastKnownPositionRef.current, getTimestamp());
-                          }
+                        // Se falhar temporariamente, reutiliza a última posição conhecida
+                        if (lastKnownPositionRef.current) {
+                          recordCapture(lastKnownPositionRef.current, getTimestamp());
+                        } else {
+                          setStatus({ type: "info", message: "Aguardando sinal estável do GPS..." });
                         }
                       },
-                      { enableHighAccuracy: true, maximumAge: 5000, timeout: 2000 }
+                      { enableHighAccuracy: true, maximumAge: 3000, timeout: Math.max(seconds * 1000, 8000) }
                     );
                   };
 
@@ -1934,14 +2009,14 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Consultas inteligentes sobre o deslocamento */}
+          {/* Estatísticas do deslocamento */}
           <Button
             onClick={() => setShowTrackAnalysis(true)}
             variant="outline"
             className="w-full min-w-0 gap-2 min-h-10 h-auto py-2 whitespace-normal text-center leading-tight border-cyan-400/40 text-cyan-300 hover:bg-cyan-400/10 transition-all active:scale-[0.97] duration-160"
           >
-            <Sparkles className="w-4 h-4" />
-            Perguntar sobre o deslocamento
+            <BarChart3 className="w-4 h-4" />
+            Estatísticas do deslocamento
           </Button>
 
           {/* Botão Configurar Cores */}
@@ -2150,40 +2225,16 @@ export default function Home() {
             ? `${coords.length} coordenada${coords.length !== 1 ? "s" : ""} carregada${coords.length !== 1 ? "s" : ""} · Raio: ${formatRadius}`
             : "Nenhuma coordenada carregada"}
         </span>
-        <span className="hidden sm:inline">v1.0</span>
+        <span className="font-semibold text-primary">v{APP_VERSION}</span>
       </footer>
 
-      {/* Janela de consultas sobre o deslocamento */}
-      {showTrackAnalysis && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-cyan-400/30 bg-card shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-cyan-300">
-                  <Sparkles className="h-5 w-5 shrink-0" />
-                  <h2 className="truncate font-display text-base font-semibold">Análise do deslocamento</h2>
-                </div>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">As respostas usam somente os registros atualmente presentes na área de dados.</p>
-              </div>
-              <button onClick={() => setShowTrackAnalysis(false)} className="rounded-md p-1.5 hover:bg-muted" aria-label="Fechar análise">
-                <X className="h-4 w-4 text-muted-foreground" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 p-4">
-              <AIChatBox
-                messages={analysisMessages}
-                onSendMessage={handleAskTrack}
-                isLoading={isAnalyzing}
-                height="min(58dvh, 520px)"
-                placeholder="Ex.: qual foi a velocidade média?"
-                emptyStateMessage="Faça uma pergunta sobre o deslocamento"
-                suggestedPrompts={["Qual foi a hora de início e de fim?", "Qual foi a velocidade média?", "Qual foi a distância aproximada?", "Existem lacunas nos registros?"]}
-                className="h-full border-0 shadow-none"
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Modal de Estatísticas do Deslocamento */}
+      <TrackStatisticsModal
+        isOpen={showTrackAnalysis}
+        onClose={() => setShowTrackAnalysis(false)}
+        logData={inputText}
+        onFitMap={handleFitAllBounds}
+      />
 
       {/* Modal de Configuração de Cores */}
       {showColorPicker && (

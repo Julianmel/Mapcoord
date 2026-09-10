@@ -79,18 +79,22 @@ export function isAnomalousAutomaticCapture(
 ): boolean {
   const speed = Number(item.speedKmh);
   if (stationary && Number.isFinite(speed) && Math.abs(speed) > 2.5) return true;
-  if (Number.isFinite(speed) && (speed < -1 || speed > 180)) return true;
-  if (Number.isFinite(item.accuracy) && Number(item.accuracy) > 50) return true;
+  if (Number.isFinite(speed) && (speed < -1 || speed > 220)) return true;
+  // Acurácia até 85m aceita condições de celulares em bolso/cidade, descartando apenas antenas grosseiras
+  if (Number.isFinite(item.accuracy) && Number(item.accuracy) > 85) return true;
   if (!Number.isFinite(item.latitude) || !Number.isFinite(item.longitude)) return true;
+  if (Math.abs(item.latitude) > 90 || Math.abs(item.longitude) > 180) return true;
+  if (item.latitude === 0 && item.longitude === 0) return true;
   if (previous && Number.isFinite(timestampMs)) {
     if (timestampMs <= previous.timestampMs) return true;
     const elapsed = (timestampMs - previous.timestampMs) / 1000;
     if (elapsed <= 0 || elapsed > 86400) return true;
     const segmentDistance = distanceMeters(previous.lat, previous.lng, item.latitude, item.longitude);
     const segmentSpeed = (segmentDistance / elapsed) * 3.6;
-    if (segmentSpeed > 180) return true;
+    if (segmentSpeed > 220) return true;
     if (stationary && segmentSpeed > 2.5) return true;
-    if (Number.isFinite(speed) && speed < 1.5 && segmentDistance > 20 && elapsed < 60) return true;
+    // Deriva estática grosseira: salto maior que 50m em intervalo curto enquanto o sensor relata speed < 1.5
+    if (Number.isFinite(speed) && speed < 1.5 && segmentDistance > 50 && elapsed < 20) return true;
   }
   return false;
 }
@@ -106,6 +110,7 @@ export function timestampToMillis(timestamp: string): number {
 export interface PendingLocationLike extends AutomaticCaptureItem {
   timestamp?: string;
   mode?: "interval" | "stationary";
+  gpsTimeMs?: number;
 }
 
 export interface AcceptedPendingLocation<T extends PendingLocationLike = PendingLocationLike> {
@@ -125,8 +130,18 @@ export function filterNativePendingLocations<T extends PendingLocationLike>(
   let consecutiveRejected = 0;
 
   for (const item of items) {
-    const timestamp = /^\d{14}$/.test(item.timestamp ?? "") ? item.timestamp! : fallbackTimestamp();
-    const timestampMs = timestampToMillis(timestamp);
+    let timestamp = /^\d{14}$/.test(item.timestamp ?? "") ? item.timestamp! : fallbackTimestamp();
+    let timestampMs = timestampToMillis(timestamp);
+
+    // Se o timestamp coincidir com o anterior devido à precisão de segundos, mas temos gpsTimeMs sequencial válido
+    if (cursor && timestampMs <= cursor.timestampMs) {
+      if (item.gpsTimeMs && item.gpsTimeMs > cursor.timestampMs) {
+        timestampMs = cursor.timestampMs + 1000;
+        const d = new Date(timestampMs);
+        timestamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+      }
+    }
+
     const stationary = item.mode === "stationary";
     const rejected =
       (stationary && (!Number.isFinite(item.speedKmh) || Math.abs(Number(item.speedKmh)) > 2.5)) ||
@@ -138,7 +153,7 @@ export function filterNativePendingLocations<T extends PendingLocationLike>(
         consecutiveRejected >= 3 &&
         Number.isFinite(item.latitude) &&
         Number.isFinite(item.longitude) &&
-        Number(item.accuracy ?? 0) <= 50
+        Number(item.accuracy ?? 0) <= 85
       ) {
         cursor = { lat: item.latitude, lng: item.longitude, timestampMs };
         consecutiveRejected = 0;
@@ -151,4 +166,61 @@ export function filterNativePendingLocations<T extends PendingLocationLike>(
   }
 
   return { accepted, rejectedCount };
+}
+
+/**
+ * Atualiza a latitude e longitude do ponto com o índice especificado no texto do log,
+ * preservando timestamps, observações, metadados, formatação e quebras de linha.
+ */
+export function updateCoordInText(
+  currentText: string,
+  pointIndex: number,
+  newLat: number,
+  newLng: number,
+): string {
+  const newline = currentText.includes("\r\n") ? "\r\n" : "\n";
+  const lines = currentText.split(/\r?\n/);
+  let coordCount = 0;
+  let didUpdate = false;
+
+  const newLines = lines.map((line) => {
+    const clean = line.replace(/^;\s*/, "").replace(/;\s*$/, "").trim();
+    if (!clean || isLogHeaderLine(clean)) return line;
+
+    // Suporta uma ou mais coordenadas por linha (tanto logs com timestamp quanto listas CSV/separadas por ;)
+    const regex = /(-?\d{1,3}\.\d+)\s*[,;\t]\s*(-?\d{1,3}\.\d+)/g;
+    let match: RegExpExecArray | null;
+    let lastIndex = 0;
+    let modifiedLine = "";
+    let lineMatched = false;
+
+    while ((match = regex.exec(line)) !== null) {
+      const lat = Number(match[1]);
+      const lng = Number(match[2]);
+      if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+        if (coordCount === pointIndex) {
+          lineMatched = true;
+          modifiedLine += line.slice(lastIndex, match.index) + `${newLat.toFixed(6)},${newLng.toFixed(6)}`;
+          lastIndex = match.index + match[0].length;
+          coordCount++;
+          didUpdate = true;
+        } else {
+          coordCount++;
+        }
+      }
+    }
+
+    if (lineMatched) {
+      modifiedLine += line.slice(lastIndex);
+      return modifiedLine;
+    }
+
+    return line;
+  });
+
+  if (!didUpdate) {
+    return currentText;
+  }
+
+  return newLines.join(newline);
 }

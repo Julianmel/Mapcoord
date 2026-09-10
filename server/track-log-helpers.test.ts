@@ -5,6 +5,7 @@ import {
   filterNativePendingLocations,
   isAnomalousAutomaticCapture,
   timestampToMillis,
+  updateCoordInText,
 } from "../client/src/lib/trackLog";
 
 const firstPoint = { lat: -16.74305, lng: -49.08752, timestampMs: timestampToMillis("20260828120000") };
@@ -95,5 +96,31 @@ const firstPoint = { lat: -16.74305, lng: -49.08752, timestampMs: timestampToMil
     const driftPoint = { latitude: firstPoint.lat + 0.00063, longitude: firstPoint.lng, speedKmh: 0.0, accuracy: 25 };
 
     expect(isAnomalousAutomaticCapture(driftPoint, firstPoint, nextTimestamp)).toBe(true);
+  });
+
+  it("updates specific point coordinates when dragging on the map", () => {
+    const text = "[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;\r\n; [20260828120000] Coleta #1, -16.743050,-49.087520, 90.0, 700.0, 10.0, 1.0, 5.0, 0.0, 0.0;\r\n; [20260828120005] Coleta #2, -16.743100,-49.087600, 95.0, 701.0, 12.0, 1.0, 5.0, 15.0, 5.0;\r\n";
+    const updated = updateCoordInText(text, 1, -16.743555, -49.088888);
+
+    expect(updated).toContain("-16.743555,-49.088888");
+    // First point remains untouched
+    expect(updated).toContain("-16.743050,-49.087520");
+    // Observation and timestamp of point 2 preserved
+    expect(updated).toContain("[20260828120005] Coleta #2");
+  });
+
+  it("updates point coordinates in semicolon-separated format on a single line", () => {
+    const text = "-23.550000,-46.630000; -23.560000,-46.640000; -23.570000,-46.650000";
+    const updated = updateCoordInText(text, 1, -23.565000, -46.645000);
+
+    expect(updated).toBe("-23.550000,-46.630000; -23.565000,-46.645000; -23.570000,-46.650000");
+  });
+
+  it("updates point coordinates in standard multiline simple coordinates", () => {
+    const text = "-23.550000, -46.630000\n-23.560000, -46.640000\n-23.570000, -46.650000";
+    const updated = updateCoordInText(text, 0, -23.551111, -46.632222);
+
+    expect(updated).toContain("-23.551111,-46.632222");
+    expect(updated).toContain("-23.560000, -46.640000");
   });
 });

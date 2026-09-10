@@ -76,16 +76,38 @@ export function parseTrackLog(data: string): TrackPoint[] {
       return found ? Number(found[1]) : undefined;
     };
 
+    // Suporte a metadados posicionais CSV padrão: , dir, alt, speed, speed_acc, acc, dist, time;
+    const matchIndex = line.indexOf(coordMatch[0]);
+    const remainder = line.slice(matchIndex + coordMatch[0].length).replace(/;+$/, "").trim();
+    const csvTokens = remainder.startsWith(",")
+      ? remainder.slice(1).split(",").map((t) => t.trim())
+      : [];
+
+    const getCsvNum = (idx: number): number | undefined => {
+      if (idx < csvTokens.length) {
+        const val = Number(csvTokens[idx]);
+        if (Number.isFinite(val)) return val;
+      }
+      return undefined;
+    };
+
+    const bearingDegrees = read("direção") ?? getCsvNum(0);
+    const altitudeMeters = read("altitude") ?? getCsvNum(1);
+    const speedKmh = read("velocidade") ?? getCsvNum(2);
+    const accuracyMeters = read("precisão") ?? getCsvNum(4);
+    const segmentDistanceMeters = read("distância_segmento") ?? getCsvNum(5);
+    const timeSincePreviousSeconds = read("tempo_desde_anterior") ?? getCsvNum(6);
+
     points.push({
       timestamp,
       lat,
       lng,
-      speedKmh: read("velocidade"),
-      bearingDegrees: read("direção"),
-      altitudeMeters: read("altitude"),
-      accuracyMeters: read("precisão"),
-      segmentDistanceMeters: read("distância_segmento"),
-      timeSincePreviousSeconds: read("tempo_desde_anterior"),
+      speedKmh,
+      bearingDegrees,
+      altitudeMeters,
+      accuracyMeters,
+      segmentDistanceMeters,
+      timeSincePreviousSeconds,
       observation: line.includes("permanência") ? "permanência" : "intervalo",
     });
   }
