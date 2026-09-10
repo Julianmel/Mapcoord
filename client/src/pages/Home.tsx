@@ -40,12 +40,15 @@ interface ParsedCoord {
   lng: number;
   observation?: string;
   timestamp?: string;
+  speedKmh?: number;
+  segmentDistanceMeters?: number;
 }
 
 interface CircleRef {
   circle: L.Circle;
   marker: L.Marker;
   center: [number, number];
+  pointIndex?: number;
 }
 
 interface ColorConfig {
@@ -260,15 +263,17 @@ function createMarkerIcon(
 
   if (variant === "start") {
     innerSvg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-        <circle cx="9" cy="9" r="8" fill="#16a34a" stroke="#ffffff" stroke-width="2"/>
-        <circle cx="9" cy="9" r="3" fill="#ffffff"/>
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+        <circle cx="11" cy="11" r="9.5" fill="#16a34a" stroke="#ffffff" stroke-width="2"/>
+        <text x="11" y="11" text-anchor="middle" dominant-baseline="central" fill="#ffffff" font-family="'JetBrains Mono',monospace" font-size="9.5" font-weight="700">1</text>
       </svg>`;
   } else if (variant === "end") {
+    const label = `${index + 1}`;
+    const fontSize = label.length >= 3 ? "7.5" : "9.5";
     innerSvg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
-        <circle cx="9" cy="9" r="8" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
-        <circle cx="9" cy="9" r="3" fill="#ffffff"/>
+      <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22">
+        <circle cx="11" cy="11" r="9.5" fill="#dc2626" stroke="#ffffff" stroke-width="2"/>
+        <text x="11" y="11" text-anchor="middle" dominant-baseline="central" fill="#ffffff" font-family="'JetBrains Mono',monospace" font-size="${fontSize}" font-weight="700">${label}</text>
       </svg>`;
   } else if (variant === "waypoint") {
     innerSvg = `
@@ -278,10 +283,12 @@ function createMarkerIcon(
       </svg>`;
   } else {
     // Marcador normal (círculo com cores configuradas e número perfeitamente legível)
+    const label = `${index + 1}`;
+    const fontSize = label.length >= 3 ? "7" : "8.5";
     innerSvg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
         <circle cx="10" cy="10" r="9" fill="${colors.numberCircleColor}" stroke="#ffffff" stroke-width="1.5"/>
-        <text x="10" y="10" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="8.5" font-weight="700">${index + 1}</text>
+        <text x="10" y="10" text-anchor="middle" dominant-baseline="central" fill="${colors.numberColor}" font-family="'JetBrains Mono',monospace" font-size="${fontSize}" font-weight="700">${label}</text>
       </svg>`;
   }
 
@@ -297,6 +304,106 @@ function createMarkerIcon(
     iconSize: [boxSize, boxSize],
     iconAnchor: [half, half],
   });
+}
+
+interface BuildPointPopupParams {
+  index: number;
+  totalPoints: number;
+  coord: ParsedCoord;
+  prevCoord?: ParsedCoord;
+  isFirst: boolean;
+  isLast: boolean;
+  isManuallyMoved?: boolean;
+}
+
+/**
+ * Constrói o HTML estruturado do popup exibido ao clicar em qualquer ponto do mapa.
+ * Inclui:
+ * - Identificação do ponto (Ponto XX, Início, Fim)
+ * - Observação (se informada)
+ * - Data e hora
+ * - Latitude e Longitude
+ * - Velocidade instantânea (km/h)
+ * - Deslocamento em relação ao ponto anterior (m ou km)
+ */
+function buildPointPopupHtml({
+  index,
+  totalPoints,
+  coord,
+  prevCoord,
+  isFirst,
+  isLast,
+  isManuallyMoved,
+}: BuildPointPopupParams): string {
+  const title = isFirst ? "Início do Percurso" : isLast ? "Fim / Ponto Atual" : `Ponto ${index + 1}`;
+  const titleColor = isFirst ? "#16a34a" : isLast ? "#dc2626" : "#0284c7";
+
+  // 1. Velocidade instantânea
+  let speedText = "--";
+  if (coord.speedKmh !== undefined && Number.isFinite(coord.speedKmh)) {
+    speedText = `${coord.speedKmh.toFixed(1).replace(".", ",")} km/h`;
+  } else if (index > 0 && prevCoord?.timestamp && coord.timestamp) {
+    const tCurrent = timestampToMillis(coord.timestamp);
+    const tPrev = timestampToMillis(prevCoord.timestamp);
+    if (Number.isFinite(tCurrent) && Number.isFinite(tPrev) && tCurrent > tPrev) {
+      const dtSeconds = (tCurrent - tPrev) / 1000;
+      if (dtSeconds > 0 && dtSeconds <= 3600) {
+        const dMeters = distanceMeters(prevCoord.lat, prevCoord.lng, coord.lat, coord.lng);
+        const calculatedKmh = (dMeters / dtSeconds) * 3.6;
+        speedText = `${calculatedKmh.toFixed(1).replace(".", ",")} km/h`;
+      }
+    }
+  } else if (isFirst) {
+    speedText = "0,0 km/h (Início)";
+  }
+
+  // 2. Deslocamento em relação ao ponto anterior
+  let displacementText = "";
+  if (isFirst) {
+    displacementText = "0 m (Ponto inicial)";
+  } else if (prevCoord) {
+    const distMeters = distanceMeters(prevCoord.lat, prevCoord.lng, coord.lat, coord.lng);
+    if (distMeters < 1000) {
+      displacementText = `${distMeters.toFixed(1).replace(".", ",")} m`;
+    } else {
+      displacementText = `${(distMeters / 1000).toFixed(2).replace(".", ",")} km (${Math.round(distMeters)} m)`;
+    }
+  } else if (coord.segmentDistanceMeters !== undefined && Number.isFinite(coord.segmentDistanceMeters)) {
+    const distMeters = coord.segmentDistanceMeters;
+    if (distMeters < 1000) {
+      displacementText = `${distMeters.toFixed(1).replace(".", ",")} m`;
+    } else {
+      displacementText = `${(distMeters / 1000).toFixed(2).replace(".", ",")} km (${Math.round(distMeters)} m)`;
+    }
+  } else {
+    displacementText = "--";
+  }
+
+  const escapeHtml = (text: string) =>
+    text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  return `
+    <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 6px; color: #1e293b; line-height: 1.45; min-width: 200px;">
+      <div style="font-weight: 700; font-size: 13px; margin-bottom: 2px; color: ${titleColor};">${escapeHtml(title)}</div>
+      ${coord.observation ? `<div style="color: #16a34a; font-weight: 600; font-size: 11.5px; margin-bottom: 2px;">${escapeHtml(coord.observation)}</div>` : ""}
+      ${coord.timestamp ? `<div style="color: #d97706; font-size: 11px; margin-bottom: 4px;">📅 ${formatTimestamp(coord.timestamp)}</div>` : ""}
+      <div style="border-top: 1px solid #e2e8f0; padding-top: 4px; margin-top: 4px; font-size: 11.5px;">
+        <div><strong>Lat:</strong> ${coord.lat.toFixed(6)}</div>
+        <div><strong>Lng:</strong> ${coord.lng.toFixed(6)}</div>
+        <div><strong>Velocidade:</strong> <span style="font-weight: 600; color: #0284c7;">${speedText}</span></div>
+        <div><strong>Deslocamento:</strong> <span style="font-weight: 600; color: #059669;">${displacementText}</span></div>
+      </div>
+      ${isManuallyMoved
+        ? `<div style="display:inline-block; margin-top:5px; font-size:10px; color:#16a34a; font-weight:600;">✓ Posição atualizada manualmente</div>`
+        : `<div style="margin-top: 6px; font-size: 10px; color: #64748b; border-top: 1px dashed #e2e8f0; padding-top: 4px;">🖐️ Segure e arraste para reposicionar</div>`
+      }
+    </div>
+  `.trim();
 }
 
 export default function Home() {
@@ -759,7 +866,28 @@ export default function Home() {
       const matchIndex = par.indexOf(coordMatch[0]);
       const observation = par.slice(0, matchIndex).replace(/^[,\s;]+|[,\s;]+$/g, "").trim();
 
-      resultado.push({ lat, lng, observation, timestamp });
+      const remainder = par.slice(matchIndex + coordMatch[0].length).replace(/;+$/, "").trim();
+      const csvTokens = remainder.startsWith(",")
+        ? remainder.slice(1).split(",").map((t) => t.trim())
+        : [];
+
+      const getCsvNum = (idx: number): number | undefined => {
+        if (idx < csvTokens.length && csvTokens[idx] !== "") {
+          const val = Number(csvTokens[idx]);
+          if (Number.isFinite(val)) return val;
+        }
+        return undefined;
+      };
+
+      const read = (label: string): number | undefined => {
+        const found = par.match(new RegExp(label + "[:=](-?\\d+(?:\\.\\d+)?)", "i"));
+        return found ? Number(found[1]) : undefined;
+      };
+
+      const speedKmh = read("velocidade") ?? read("speed") ?? getCsvNum(2);
+      const segmentDistanceMeters = read("distância_segmento") ?? read("dist") ?? getCsvNum(5);
+
+      resultado.push({ lat, lng, observation, timestamp, speedKmh, segmentDistanceMeters });
     });
     return resultado;
   }, []);
@@ -1020,8 +1148,13 @@ export default function Home() {
       const isFirst = index === 0;
       const isLast = index === coordsList.length - 1;
 
-      // Todos os pontos agora possuem marcador renderizado e reposicionável por arrasto
-      const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "waypoint") : "normal";
+      // Quando a opção "Traçar linha" estiver ativada, manter APENAS os pontos inicial e final
+      if (showLine && !isFirst && !isLast) {
+        return;
+      }
+
+      // No modo normal, todos os pontos usam "normal". No modo linha, o primeiro é "start" e o último é "end".
+      const variant = showLine ? (isFirst ? "start" : "end") : "normal";
       const icon = createMarkerIcon(index, colors, variant);
 
       // Permite segurar e arrastar qualquer ponto para edição direta sobre o mapa
@@ -1033,13 +1166,15 @@ export default function Home() {
 
       marker.addTo(map);
 
-      const title = isFirst ? "Início do Percurso" : isLast ? "Fim / Ponto Atual" : `Ponto ${index + 1}`;
-      const popupContent = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
-        <strong style="color: ${isFirst ? '#16a34a' : isLast ? '#dc2626' : '#0284c7'};">${title}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
-        Lat: ${coord.lat.toFixed(6)}<br/>
-        Lng: ${coord.lng.toFixed(6)}<br/>
-        <span style="display:inline-block; margin-top:4px; font-size:10px; color:#64748b;">🖐️ Segure e arraste para reposicionar</span>
-      </div>`;
+      const prevCoord = index > 0 ? coordsList[index - 1] : undefined;
+      const popupContent = buildPointPopupHtml({
+        index,
+        totalPoints: coordsList.length,
+        coord,
+        prevCoord,
+        isFirst,
+        isLast,
+      });
 
       marker.bindPopup(popupContent);
 
@@ -1072,12 +1207,21 @@ export default function Home() {
         circle.setLatLng(newPos);
         handlePointDragged(index, newPos.lat, newPos.lng);
 
-        const updatedPopup = `<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px; color: #1e293b;">
-          <strong style="color: ${isFirst ? '#16a34a' : isLast ? '#dc2626' : '#0284c7'};">${title}</strong>${coord.observation ? `<br/><span style="color: #16a34a; font-weight: 600;">${coord.observation}</span>` : ""}${coord.timestamp ? `<br/><span style="color: #d97706; font-size: 11px;">${formatTimestamp(coord.timestamp)}</span>` : ""}<br/>
-          Lat: ${newPos.lat.toFixed(6)}<br/>
-          Lng: ${newPos.lng.toFixed(6)}<br/>
-          <span style="display:inline-block; margin-top:4px; font-size:10px; color:#16a34a; font-weight:600;">✓ Posição atualizada manualmente</span>
-        </div>`;
+        const updatedCoord: ParsedCoord = {
+          ...coord,
+          lat: newPos.lat,
+          lng: newPos.lng,
+        };
+
+        const updatedPopup = buildPointPopupHtml({
+          index,
+          totalPoints: coordsList.length,
+          coord: updatedCoord,
+          prevCoord,
+          isFirst,
+          isLast,
+          isManuallyMoved: true,
+        });
         marker.setPopupContent(updatedPopup);
 
         setTimeout(() => {
@@ -1091,7 +1235,7 @@ export default function Home() {
         }
       });
 
-      newCircles.push({ circle, marker, center });
+      newCircles.push({ circle, marker, center, pointIndex: index });
     });
 
     setActiveCircles(newCircles);
@@ -1162,13 +1306,14 @@ export default function Home() {
     setRadius(newRadius);
     activeCircles.forEach((c, index) => {
       c.circle.setRadius(newRadius);
-      const isFirst = index === 0;
-      const isLast = index === activeCircles.length - 1;
-      const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "waypoint") : "normal";
-      const icon = createMarkerIcon(index, colors, variant);
+      const pointIndex = c.pointIndex ?? index;
+      const isFirst = pointIndex === 0;
+      const isLast = coords.length > 0 ? pointIndex === coords.length - 1 : index === activeCircles.length - 1;
+      const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "normal") : "normal";
+      const icon = createMarkerIcon(pointIndex, colors, variant);
       c.marker.setIcon(icon);
     });
-  }, [activeCircles, colors, showLine]);
+  }, [activeCircles, colors, showLine, coords.length]);
 
   // Traçar/remover linha conectando todos os pontos
   const handleToggleLine = useCallback(() => {
@@ -1590,8 +1735,13 @@ export default function Home() {
     // Atualiza os marcadores e círculos existentes sem precisar recarregar
     if (activeCircles.length > 0) {
       activeCircles.forEach((c, index) => {
+        const pointIndex = c.pointIndex ?? index;
+        const isFirst = pointIndex === 0;
+        const isLast = coords.length > 0 ? pointIndex === coords.length - 1 : index === activeCircles.length - 1;
+        const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "normal") : "normal";
+
         // Atualiza ícone do marcador
-        const icon = createMarkerIcon(index, newColors);
+        const icon = createMarkerIcon(pointIndex, newColors, variant);
         c.marker.setIcon(icon);
 
         // Atualiza círculo de raio
@@ -1602,7 +1752,7 @@ export default function Home() {
         }
       });
     }
-  }, [colors, activeCircles]);
+  }, [colors, activeCircles, showLine, coords.length]);
 
   // Resetar cores para padrão
   const handleResetColors = useCallback(() => {
@@ -1613,7 +1763,12 @@ export default function Home() {
     // Atualiza os marcadores e círculos existentes
     if (activeCircles.length > 0) {
       activeCircles.forEach((c, index) => {
-        const icon = createMarkerIcon(index, DEFAULT_COLORS);
+        const pointIndex = c.pointIndex ?? index;
+        const isFirst = pointIndex === 0;
+        const isLast = coords.length > 0 ? pointIndex === coords.length - 1 : index === activeCircles.length - 1;
+        const variant = showLine ? (isFirst ? "start" : isLast ? "end" : "normal") : "normal";
+
+        const icon = createMarkerIcon(pointIndex, DEFAULT_COLORS, variant);
         c.marker.setIcon(icon);
         c.circle.setStyle({
           fillColor: DEFAULT_COLORS.circleFillColor,
@@ -1622,10 +1777,10 @@ export default function Home() {
         });
       });
     }
-  }, [activeCircles]);
+  }, [activeCircles, showLine, coords.length]);
 
   const formatRadius = useMemo(() => {
-    return `${radius.toFixed(1)} m`;
+    return `${radius.toFixed(1).replace(".", ",")} m`;
   }, [radius]);
 
   // Cleanup no desmonte do componente
@@ -1964,9 +2119,9 @@ export default function Home() {
                 <span>Notificações: <b className={nativeDiagnostics.notifications ? "text-emerald-400" : "text-amber-300"}>{nativeDiagnostics.notifications ? "ativas" : "desativadas"}</b></span>
                 <span>Modo: <b className="text-foreground">{nativeDiagnostics.mode === "stationary" ? `pausas ${nativeDiagnostics.stationaryWaitSeconds}s` : `intervalo ${nativeDiagnostics.intervalSeconds || "—"}s`}</b></span>
                 <span>Pendentes: <b className="text-foreground">{nativeDiagnostics.pendingCount}</b></span>
-                <span>Velocidade: <b className="text-foreground">{Number.isFinite(nativeDiagnostics.instantSpeedKmh) ? `${nativeDiagnostics.instantSpeedKmh!.toFixed(1)} km/h` : "—"}</b></span>
-                <span>Último segmento: <b className="text-foreground">{Number.isFinite(nativeDiagnostics.lastSegmentDistanceMeters) ? `${nativeDiagnostics.lastSegmentDistanceMeters!.toFixed(1)} m` : "—"}</b></span>
-                <span>Tempo desde anterior: <b className="text-foreground">{Number.isFinite(nativeDiagnostics.elapsedSincePreviousSeconds) ? `${nativeDiagnostics.elapsedSincePreviousSeconds!.toFixed(1)} s` : "—"}</b></span>
+                <span>Velocidade: <b className="text-foreground">{Number.isFinite(nativeDiagnostics.instantSpeedKmh) ? `${nativeDiagnostics.instantSpeedKmh!.toFixed(1).replace(".", ",")} km/h` : "—"}</b></span>
+                <span>Último segmento: <b className="text-foreground">{Number.isFinite(nativeDiagnostics.lastSegmentDistanceMeters) ? `${nativeDiagnostics.lastSegmentDistanceMeters!.toFixed(1).replace(".", ",")} m` : "—"}</b></span>
+                <span>Tempo desde anterior: <b className="text-foreground">{Number.isFinite(nativeDiagnostics.elapsedSincePreviousSeconds) ? `${nativeDiagnostics.elapsedSincePreviousSeconds!.toFixed(1).replace(".", ",")} s` : "—"}</b></span>
               </div>
               {(nativeDiagnostics.lastTimestamp || nativeDiagnostics.lastLatitude) && (
                 <p className="break-all text-[10px] font-mono text-muted-foreground">

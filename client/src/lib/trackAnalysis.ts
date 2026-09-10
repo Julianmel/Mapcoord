@@ -204,11 +204,11 @@ export function formatTrackSummary(metrics: TrackMetrics): string {
     metrics.lastTimestamp ? "- **Fim:** " + metrics.lastTimestamp.toLocaleTimeString("pt-BR") + " (" + metrics.lastTimestamp.toLocaleDateString("pt-BR") + ")" : "",
     "- **Duração total decorrida:** " + formatTime(metrics.durationSeconds),
     "- **Tempo em movimento útil:** " + formatTime(metrics.movingSeconds),
-    "- **Distância acumulada:** " + metrics.totalDistanceKm.toFixed(3) + " km (" + metrics.totalDistanceMeters.toFixed(1) + " m)",
-    "- **Velocidade média em movimento:** " + metrics.averageSpeedKmh.toFixed(2) + " km/h",
-    metrics.maxReportedSpeedKmh !== undefined ? "- **Velocidade máxima registrada:** " + metrics.maxReportedSpeedKmh.toFixed(2) + " km/h" : "",
-    metrics.averageReportedSpeedKmh !== undefined ? "- **Velocidade instantânea média:** " + metrics.averageReportedSpeedKmh.toFixed(2) + " km/h" : "",
-    metrics.averageAccuracyMeters !== undefined ? "- **Precisão média do GPS:** ±" + metrics.averageAccuracyMeters.toFixed(1) + " m" : "",
+    "- **Distância acumulada:** " + metrics.totalDistanceKm.toFixed(3).replace(".", ",") + " km (" + metrics.totalDistanceMeters.toFixed(1).replace(".", ",") + " m)",
+    "- **Velocidade média em movimento:** " + metrics.averageSpeedKmh.toFixed(2).replace(".", ",") + " km/h",
+    metrics.maxReportedSpeedKmh !== undefined ? "- **Velocidade máxima registrada:** " + metrics.maxReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h" : "",
+    metrics.averageReportedSpeedKmh !== undefined ? "- **Velocidade instantânea média:** " + metrics.averageReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h" : "",
+    metrics.averageAccuracyMeters !== undefined ? "- **Precisão média do GPS:** ±" + metrics.averageAccuracyMeters.toFixed(1).replace(".", ",") + " m" : "",
     metrics.largestGapSeconds > 10 ? "- **Maior intervalo sem dados (lacuna):** " + formatTime(metrics.largestGapSeconds) : "",
     metrics.stationaryStopsCount > 0 ? "- **Paradas/permanências detectadas:** " + metrics.stationaryStopsCount : "",
   ]
@@ -227,13 +227,13 @@ export function answerDisplacementQuestion(question: string, logData: string): s
   if (q.includes("velocidade") || q.includes("rapido") || q.includes("km/h")) {
     const parts = [
       "🚗 **Velocidade do deslocamento:**",
-      "• **Velocidade média em movimento:** " + metrics.averageSpeedKmh.toFixed(2) + " km/h (calculada considerando segmentos ativos de até 60s).",
+      "• **Velocidade média em movimento:** " + metrics.averageSpeedKmh.toFixed(2).replace(".", ",") + " km/h (calculada considerando segmentos ativos de até 60s).",
     ];
     if (metrics.maxReportedSpeedKmh !== undefined) {
-      parts.push("• **Maior velocidade instantânea:** " + metrics.maxReportedSpeedKmh.toFixed(2) + " km/h.");
+      parts.push("• **Maior velocidade instantânea:** " + metrics.maxReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h.");
     }
     if (metrics.averageReportedSpeedKmh !== undefined) {
-      parts.push("• **Velocidade instantânea média reportada pelo sensor GPS:** " + metrics.averageReportedSpeedKmh.toFixed(2) + " km/h.");
+      parts.push("• **Velocidade instantânea média reportada pelo sensor GPS:** " + metrics.averageReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h.");
     }
     return parts.join("\n");
   }
@@ -241,9 +241,9 @@ export function answerDisplacementQuestion(question: string, logData: string): s
   if (q.includes("distancia") || q.includes("km") || q.includes("metros") || q.includes("quilometro") || q.includes("longe")) {
     return [
       "📏 **Distância percorrida:**",
-      "• **Distância total acumulada:** " + metrics.totalDistanceKm.toFixed(3) + " km (" + metrics.totalDistanceMeters.toFixed(1) + " metros).",
+      "• **Distância total acumulada:** " + metrics.totalDistanceKm.toFixed(3).replace(".", ",") + " km (" + metrics.totalDistanceMeters.toFixed(1).replace(".", ",") + " metros).",
       metrics.averageSegmentDistanceMeters !== undefined
-        ? "• **Distância média por ponto:** " + metrics.averageSegmentDistanceMeters.toFixed(1) + " metros."
+        ? "• **Distância média por ponto:** " + metrics.averageSegmentDistanceMeters.toFixed(1).replace(".", ",") + " metros."
         : "",
     ]
       .filter(Boolean)

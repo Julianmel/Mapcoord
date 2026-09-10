@@ -112,11 +112,11 @@ export function TrackStatisticsModal({
                   <div>
                     <div className="font-mono text-xl sm:text-2xl font-bold text-foreground">
                       {metrics.totalDistanceKm >= 1
-                        ? `${metrics.totalDistanceKm.toFixed(2)} km`
+                        ? `${metrics.totalDistanceKm.toFixed(2).replace(".", ",")} km`
                         : `${metrics.totalDistanceMeters.toFixed(0)} m`}
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
-                      {metrics.totalDistanceMeters.toFixed(1)} metros
+                      {metrics.totalDistanceMeters.toFixed(1).replace(".", ",")} metros
                     </div>
                   </div>
                 </div>
@@ -145,7 +145,7 @@ export function TrackStatisticsModal({
                   </div>
                   <div>
                     <div className="font-mono text-xl sm:text-2xl font-bold text-foreground">
-                      {metrics.averageSpeedKmh.toFixed(1)}{" "}
+                      {metrics.averageSpeedKmh.toFixed(1).replace(".", ",")}{" "}
                       <span className="text-sm font-normal text-muted-foreground">km/h</span>
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
@@ -186,7 +186,7 @@ export function TrackStatisticsModal({
                   </div>
                   <span className="font-mono font-medium text-foreground">
                     {metrics.maxReportedSpeedKmh !== undefined
-                      ? `${metrics.maxReportedSpeedKmh.toFixed(1)} km/h`
+                      ? `${metrics.maxReportedSpeedKmh.toFixed(1).replace(".", ",")} km/h`
                       : "Não informada"}
                   </span>
                 </div>
@@ -199,7 +199,7 @@ export function TrackStatisticsModal({
                   </div>
                   <span className="font-mono font-medium text-foreground">
                     {metrics.averageAccuracyMeters !== undefined
-                      ? `±${metrics.averageAccuracyMeters.toFixed(1)} m`
+                      ? `±${metrics.averageAccuracyMeters.toFixed(1).replace(".", ",")} m`
                       : "Alta / Standard"}
                   </span>
                 </div>
