@@ -58,4 +58,26 @@ describe("track analysis", () => {
     expect(summary).toContain("Distância média por segmento registrada: 0.8 m");
     expect(summary).toContain("Tempo médio desde o ponto anterior: 2.5 s");
   });
+
+  it("formats numbers in SI / pt-BR format with comma for decimal and dot for thousands", async () => {
+    const { formatPtBrNumber } = await import("../client/src/lib/trackAnalysis");
+    expect(formatPtBrNumber(1234.5, 1, 1)).toBe("1.234,5");
+    expect(formatPtBrNumber(0.5, 1, 1)).toBe("0,5");
+    expect(formatPtBrNumber(10000, 0, 0)).toBe("10.000");
+  });
+
+  it("detects movement pauses exceeding 3 minutes (180 seconds)", async () => {
+    const { computeTrackMetrics } = await import("../client/src/lib/trackAnalysis");
+    const log = [
+      "[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;",
+      "; [20260912175918] Coleta #72 (intervalo 20s), -16.730543,-49.087927, , 780.2, 0.7, 5.4, 15.6, 33.4, 38.0",
+      "; [20260912175936] Coleta #73 (intervalo 20s) - pausa detectada, -16.730540,-49.087888, 32.9, 780.2, 0.4, 5.4, 13.4, 4.2, 18.0",
+      "; [20260912180335] Coleta #74 (intervalo 20s), -16.730529,-49.087751, 285.0, 780.1, 3.9, 9.4, 47.5, 9.6, 239.0",
+    ].join("\r\n");
+
+    const metrics = computeTrackMetrics(log);
+    expect(metrics).not.toBeNull();
+    expect(metrics!.pausesOver3Min.length).toBeGreaterThanOrEqual(1);
+    expect(metrics!.pausesOver3Min[0].durationSeconds).toBeGreaterThanOrEqual(180);
+  });
 });

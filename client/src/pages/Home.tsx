@@ -58,7 +58,7 @@ interface ColorConfig {
   circleBorderColor: string;
 }
 
-const RADIUS_MIN = 1;
+const RADIUS_MIN = 0.5;
 const RADIUS_MAX = 5;
 const STORAGE_KEY = "mapa-coordenadas-colors";
 const DATA_STORAGE_KEY = "mapa-coordenadas-data";
@@ -88,6 +88,8 @@ interface NativeLocationCapture {
   altitudeMeters?: number;
   speedAccuracyKmh?: number;
   gpsTimeMs?: number;
+  pauseDetected?: boolean;
+  observation?: string;
 }
 
 interface NativeDiagnostics {
@@ -418,7 +420,7 @@ export default function Home() {
   const inputTextRef = useRef(inputText);
   useEffect(() => { inputTextRef.current = inputText; }, [inputText]);
   const [coords, setCoords] = useState<ParsedCoord[]>([]);
-  const [radius, setRadius] = useState(3); // metros
+  const [radius, setRadius] = useState(0.5); // metros
   const [status, setStatus] = useState<{ type: "success" | "error" | "info" | "idle"; message: string }>({
     type: "idle",
     message: "",
@@ -428,6 +430,8 @@ export default function Home() {
   useEffect(() => { activeCirclesRef.current = activeCircles; }, [activeCircles]);
   const startingNativeRef = useRef<boolean>(false);
   const isEditingPointRef = useRef<boolean>(false);
+  const consecutiveLowSpeedCountRef = useRef<number>(0);
+  const isIntervalPausedRef = useRef<boolean>(false);
 
   const handlePointDragged = useCallback((pointIndex: number, newLat: number, newLng: number) => {
     isEditingPointRef.current = true;
@@ -624,8 +628,31 @@ export default function Home() {
           setStatus({ type: "info", message: "Leitura automática descartada por possível anomalia de deslocamento." });
           return;
         }
+
+        const derivedSpeedKmh = lastRecordedPointRef.current && timestampMs > lastRecordedPointRef.current.timestampMs
+          ? (distanceMeters(lastRecordedPointRef.current.lat, lastRecordedPointRef.current.lng, latitude, longitude) / Math.max(1, (timestampMs - lastRecordedPointRef.current.timestampMs) / 1000)) * 3.6
+          : undefined;
+        const effectiveSpeed = speedKmh ?? derivedSpeedKmh ?? 0;
+
+        let isPauseDetected = false;
+        if (effectiveSpeed < 1.0) {
+          if (isIntervalPausedRef.current) {
+            setStatus({ type: "info", message: "Em pausa (< 1 km/h). Registros suspensos até novo movimento." });
+            return;
+          }
+          consecutiveLowSpeedCountRef.current += 1;
+          if (consecutiveLowSpeedCountRef.current >= 2) {
+            isIntervalPausedRef.current = true;
+            isPauseDetected = true;
+          }
+        } else {
+          consecutiveLowSpeedCountRef.current = 0;
+          isIntervalPausedRef.current = false;
+        }
+
         sequenceCounterRef.current += 1;
-        const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${interval}s)`;
+        const pauseSuffix = isPauseDetected ? " - pausa detectada" : "";
+        const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${interval}s)${pauseSuffix}`;
         const novaCoord = `[${timestamp}] ${observation}, ${latitude.toFixed(6)},${longitude.toFixed(6)}${formatGpsMetadata({
           speedKmh,
           bearingDegrees: position.coords.heading != null && Number.isFinite(position.coords.heading) ? position.coords.heading : undefined,
@@ -633,6 +660,9 @@ export default function Home() {
           accuracy,
         })}${addSegmentMetadata(latitude, longitude, timestamp)}`;
         setInputText((prev) => appendLogRecord(prev, novaCoord));
+        if (isPauseDetected) {
+          setStatus({ type: "info", message: "Pausa detectada (< 1 km/h). Registros seguintes serão suspensos até haver deslocamento." });
+        }
       };
 
       const doCapture = () => {
@@ -923,9 +953,10 @@ export default function Home() {
         sequenceCounterRef.current += 1;
         const currentPoint = { lat: item.latitude, lng: item.longitude, timestampMs };
         const segmentMetadata = formatSegmentMetadata(lastRecordedPointRef.current, currentPoint);
+        const pauseSuffix = item.pauseDetected || item.observation?.includes("pausa detectada") ? " - pausa detectada" : "";
         const entry = stationary
-          ? `[${timestamp}] Coleta #${sequenceCounterRef.current} (permanência ${wait}s), ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`
-          : `[${timestamp}] Coleta #${sequenceCounterRef.current} (intervalo ${interval}s), ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`;
+          ? `[${timestamp}] Coleta #${sequenceCounterRef.current} (permanência ${wait}s)${pauseSuffix}, ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`
+          : `[${timestamp}] Coleta #${sequenceCounterRef.current} (intervalo ${interval}s)${pauseSuffix}, ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`;
         lastRecordedPointRef.current = currentPoint;
         next = appendLogRecord(next, entry);
         importedCount += 1;
@@ -998,7 +1029,18 @@ export default function Home() {
           const raw = bridge.getDiagnostics?.();
           if (raw) {
             const diag = JSON.parse(raw) as NativeDiagnostics;
-            setNativeDiagnostics(diag);
+            setNativeDiagnostics((prev) => {
+              if (!prev) return diag;
+              return {
+                ...diag,
+                lastTimestamp: diag.lastTimestamp || prev.lastTimestamp,
+                lastLatitude: diag.lastLatitude || prev.lastLatitude,
+                lastLongitude: diag.lastLongitude || prev.lastLongitude,
+                instantSpeedKmh: Number.isFinite(diag.instantSpeedKmh) ? diag.instantSpeedKmh : prev.instantSpeedKmh,
+                lastSegmentDistanceMeters: Number.isFinite(diag.lastSegmentDistanceMeters) ? diag.lastSegmentDistanceMeters : prev.lastSegmentDistanceMeters,
+                elapsedSincePreviousSeconds: Number.isFinite(diag.elapsedSincePreviousSeconds) ? diag.elapsedSincePreviousSeconds : prev.elapsedSincePreviousSeconds,
+              };
+            });
             if (diag.service === "active") {
               if (diag.mode === "stationary") {
                 setStationaryCapture(true);
@@ -1709,11 +1751,13 @@ export default function Home() {
     }
     setInputText("");
     setCoords([]);
-    setRadius(3);
+    setRadius(0.5);
     setStatus({ type: "idle", message: "" });
     sequenceCounterRef.current = 0;
     prevCoordsCountRef.current = 0;
     lastRecordedPointRef.current = null;
+    consecutiveLowSpeedCountRef.current = 0;
+    isIntervalPausedRef.current = false;
 
     if (polylineRef.current) {
       polylineRef.current.remove();
@@ -1826,8 +1870,8 @@ export default function Home() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
-      {/* Header */}
-      <header className="flex items-center gap-3 px-4 py-3 border-b border-border bg-card/80 backdrop-blur-sm shrink-0">
+      {/* Header com proteção contra status bar e notch */}
+      <header className="flex items-center gap-3 px-4 py-3 pt-[max(env(safe-area-inset-top,0px),0.75rem)] border-b border-border bg-card/80 backdrop-blur-sm shrink-0">
         <img
           src="/manus-storage/logo_35b01b42.png"
           alt="Logo"
@@ -1920,6 +1964,8 @@ export default function Home() {
                   lastCaptureTimeRef.current = 0;
                   saveContinuousState(null);
                   lastKnownPositionRef.current = null;
+                  consecutiveLowSpeedCountRef.current = 0;
+                  isIntervalPausedRef.current = false;
                   setStatus({ type: "info", message: "Captura contínua interrompida." });
                 }}
                 variant="outline"
@@ -1996,8 +2042,31 @@ export default function Home() {
                       setStatus({ type: "info", message: "Leitura automática descartada por possível anomalia de deslocamento." });
                       return;
                     }
+
+                    const derivedSpeedKmh = lastRecordedPointRef.current && timestampMs > lastRecordedPointRef.current.timestampMs
+                      ? (distanceMeters(lastRecordedPointRef.current.lat, lastRecordedPointRef.current.lng, latitude, longitude) / Math.max(1, (timestampMs - lastRecordedPointRef.current.timestampMs) / 1000)) * 3.6
+                      : undefined;
+                    const effectiveSpeed = speedKmh ?? derivedSpeedKmh ?? 0;
+
+                    let isPauseDetected = false;
+                    if (effectiveSpeed < 1.0) {
+                      if (isIntervalPausedRef.current) {
+                        setStatus({ type: "info", message: "Em pausa (< 1 km/h). Registros suspensos até novo movimento." });
+                        return;
+                      }
+                      consecutiveLowSpeedCountRef.current += 1;
+                      if (consecutiveLowSpeedCountRef.current >= 2) {
+                        isIntervalPausedRef.current = true;
+                        isPauseDetected = true;
+                      }
+                    } else {
+                      consecutiveLowSpeedCountRef.current = 0;
+                      isIntervalPausedRef.current = false;
+                    }
+
                     sequenceCounterRef.current += 1;
-                    const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${captureIntervalRef2.current}s)`;
+                    const pauseSuffix = isPauseDetected ? " - pausa detectada" : "";
+                    const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${captureIntervalRef2.current}s)${pauseSuffix}`;
                     const novaCoord = `[${timestamp}] ${observation}, ${latitude.toFixed(6)},${longitude.toFixed(6)}${formatGpsMetadata({
                       speedKmh,
                       bearingDegrees: position.coords.heading != null && Number.isFinite(position.coords.heading) ? position.coords.heading : undefined,
@@ -2005,6 +2074,9 @@ export default function Home() {
                       accuracy,
                     })}${addSegmentMetadata(latitude, longitude, timestamp)}`;
                     setInputText((prev) => appendLogRecord(prev, novaCoord));
+                    if (isPauseDetected) {
+                      setStatus({ type: "info", message: "Pausa detectada (< 1 km/h). Registros seguintes serão suspensos até haver deslocamento." });
+                    }
                   };
 
                   // Intervalo PRINCIPAL: a cada N segundos, obtém a posição precisa

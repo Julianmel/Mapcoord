@@ -47,7 +47,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+        }
         webView = WebView(this).apply {
+            fitsSystemWindows = true
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -235,17 +239,9 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun clearPendingLocations() {
-            getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE)
-                .edit()
+            getSharedPreferences(LocationForegroundService.PREFS_NAME, MODE_PRIVATE).edit()
                 .putString(LocationForegroundService.KEY_PENDING, JSONArray().toString())
                 .putInt(LocationForegroundService.KEY_PENDING_COUNT, 0)
-                .remove(LocationForegroundService.KEY_LAST_LATITUDE)
-                .remove(LocationForegroundService.KEY_LAST_LONGITUDE)
-                .remove(LocationForegroundService.KEY_LAST_GPS_TIME)
-                .remove(LocationForegroundService.KEY_LAST_LOCATION_TIME)
-                .remove(LocationForegroundService.KEY_LAST_SEGMENT_DISTANCE_METERS)
-                .remove(LocationForegroundService.KEY_ELAPSED_SINCE_PREVIOUS_SECONDS)
-                .remove(LocationForegroundService.KEY_INSTANT_SPEED_KMH)
                 .apply()
         }
 

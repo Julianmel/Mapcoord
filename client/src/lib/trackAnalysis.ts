@@ -11,6 +11,21 @@ export interface TrackPoint {
   observation?: string;
 }
 
+export interface TrackPause {
+  id: string;
+  startIndex: number;
+  endIndex: number;
+  startTimestamp: Date;
+  endTimestamp: Date;
+  durationSeconds: number;
+  lat: number;
+  lng: number;
+  observation?: string;
+  nearbyCommercialPoint?: string;
+  distanceFromCommercialMeters?: number;
+  commercialAddress?: string;
+}
+
 export interface TrackMetrics {
   pointsCount: number;
   firstTimestamp?: Date;
@@ -27,9 +42,39 @@ export interface TrackMetrics {
   averageAccuracyMeters?: number;
   largestGapSeconds: number;
   stationaryStopsCount: number;
+  pausesOver3Min: TrackPause[];
 }
 
-function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+/**
+ * Formata números no padrão brasileiro / Sistema Internacional:
+ * vírgula para casas decimais e ponto para milhares (ex.: 1.234,5).
+ */
+export function formatPtBrNumber(value: number, minDecimals = 1, maxDecimals = 1): string {
+  if (!Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: minDecimals,
+    maximumFractionDigits: maxDecimals,
+  }).format(value);
+}
+
+/**
+ * Formata duração em segundos no padrão legível pt-BR.
+ */
+export function formatTimePtBr(seconds: number): string {
+  const rounded = Math.round(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const mins = Math.floor((rounded % 3600) / 60);
+  const secs = rounded % 60;
+  if (hours > 0) {
+    return `${hours}h ${mins}min ${secs}s`;
+  }
+  if (mins > 0) {
+    return `${mins}min ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
+export function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const radius = 6371000;
   const toRad = (value: number) => (value * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
@@ -71,6 +116,16 @@ export function parseTrackLog(data: string): TrackPoint[] {
       continue;
     }
 
+    // Extrai observação textual entre o timestamp e a coordenada
+    let observation = "";
+    if (tsMatch) {
+      const afterTs = line.slice(line.indexOf(tsMatch[0]) + tsMatch[0].length);
+      const coordPos = afterTs.indexOf(coordMatch[0]);
+      if (coordPos >= 0) {
+        observation = afterTs.slice(0, coordPos).replace(/^[,\s;]+|[,\s;]+$/g, "").trim();
+      }
+    }
+
     const read = (label: string): number | undefined => {
       const found = line.match(new RegExp(label + "=(-?\\d+(?:\\.\\d+)?)"));
       return found ? Number(found[1]) : undefined;
@@ -108,11 +163,184 @@ export function parseTrackLog(data: string): TrackPoint[] {
       accuracyMeters,
       segmentDistanceMeters,
       timeSincePreviousSeconds,
-      observation: line.includes("permanência") ? "permanência" : "intervalo",
+      observation: observation || (line.includes("permanência") ? "permanência" : "intervalo"),
     });
   }
 
   return points;
+}
+
+/**
+ * Identifica paradas/pausas no deslocamento superiores a 3 minutos (180 segundos).
+ */
+export function findTrackPauses(points: TrackPoint[]): TrackPause[] {
+  const pauses: TrackPause[] = [];
+  if (points.length < 2) return pauses;
+
+  // 1. Pausas por intervalo/lacuna temporal onde a posição permaneceu a mesma (distância <= 35m)
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const gap = (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000;
+    const dist = distanceMeters(prev, curr);
+
+    if (gap >= 180 && dist <= 35) {
+      pauses.push({
+        id: `pause-gap-${i}`,
+        startIndex: i - 1,
+        endIndex: i,
+        startTimestamp: prev.timestamp,
+        endTimestamp: curr.timestamp,
+        durationSeconds: gap,
+        lat: prev.lat,
+        lng: prev.lng,
+        observation: prev.observation || "pausa detectada",
+      });
+    }
+  }
+
+  // 2. Pausas por permanência prolongada num mesmo local (cluster com raio <= 25m por >= 180s)
+  let clusterStart = 0;
+  for (let i = 1; i < points.length; i++) {
+    const distFromAnchor = distanceMeters(points[clusterStart], points[i]);
+    if (distFromAnchor > 25) {
+      const dur = (points[i - 1].timestamp.getTime() - points[clusterStart].timestamp.getTime()) / 1000;
+      if (dur >= 180) {
+        // Evita duplicar se já foi adicionado como gap
+        const alreadyExists = pauses.some(
+          (p) => Math.abs(p.startTimestamp.getTime() - points[clusterStart].timestamp.getTime()) < 30000
+        );
+        if (!alreadyExists) {
+          pauses.push({
+            id: `pause-cluster-${clusterStart}`,
+            startIndex: clusterStart,
+            endIndex: i - 1,
+            startTimestamp: points[clusterStart].timestamp,
+            endTimestamp: points[i - 1].timestamp,
+            durationSeconds: dur,
+            lat: points[clusterStart].lat,
+            lng: points[clusterStart].lng,
+            observation: points[clusterStart].observation || "permanência prolongada",
+          });
+        }
+      }
+      clusterStart = i;
+    }
+  }
+
+  // Verifica se o último trecho permaneceu parado até o fim
+  const finalDur = (points[points.length - 1].timestamp.getTime() - points[clusterStart].timestamp.getTime()) / 1000;
+  if (finalDur >= 180) {
+    const alreadyExists = pauses.some(
+      (p) => Math.abs(p.startTimestamp.getTime() - points[clusterStart].timestamp.getTime()) < 30000
+    );
+    if (!alreadyExists) {
+      pauses.push({
+        id: `pause-cluster-end-${clusterStart}`,
+        startIndex: clusterStart,
+        endIndex: points.length - 1,
+        startTimestamp: points[clusterStart].timestamp,
+        endTimestamp: points[points.length - 1].timestamp,
+        durationSeconds: finalDur,
+        lat: points[clusterStart].lat,
+        lng: points[clusterStart].lng,
+        observation: points[clusterStart].observation || "permanência ao fim",
+      });
+    }
+  }
+
+  return pauses;
+}
+
+/**
+ * Consulta estabelecimento comercial próximo (em raio de 3 a 15 metros) via Overpass / Nominatim.
+ */
+export async function fetchNearbyCommercialPoint(
+  lat: number,
+  lng: number
+): Promise<{ name: string; type?: string; distanceMeters?: number; fullAddress?: string }> {
+  try {
+    // 1. Tenta Overpass API procurando nós comerciais próximos (shop, amenity, commercial, office)
+    const overpassQuery = `[out:json][timeout:6];(node(around:20,${lat},${lng})["shop"];node(around:20,${lat},${lng})["amenity"];node(around:20,${lat},${lng})["commercial"];node(around:20,${lat},${lng})["office"];way(around:20,${lat},${lng})["shop"];);out center 3;`;
+    const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(overpassUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.elements && data.elements.length > 0) {
+        let bestElement = data.elements[0];
+        let minD = 999;
+        for (const el of data.elements) {
+          const elLat = el.lat ?? el.center?.lat;
+          const elLng = el.lon ?? el.center?.lon;
+          if (elLat && elLng) {
+            const d = distanceMeters({ lat, lng }, { lat: elLat, lng: elLng });
+            if (d < minD) {
+              minD = d;
+              bestElement = el;
+            }
+          }
+        }
+
+        const tags = bestElement.tags || {};
+        const name = tags.name || tags.brand || tags.operator;
+        const category = tags.shop || tags.amenity || tags.commercial || tags.office || "Comércio";
+        if (name) {
+          return {
+            name,
+            type: category,
+            distanceMeters: Math.round(minD * 10) / 10,
+          };
+        }
+      }
+    }
+  } catch {
+    // Se Overpass falhar, segue para Nominatim reverse geocode
+  }
+
+  // 2. Fallback para Nominatim reverse geocode detalhado
+  try {
+    const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=19&addressdetails=1&extratags=1`;
+    const res = await fetch(nominatimUrl, {
+      headers: { "User-Agent": "Mapcoord/6.2 (mapcoord@app)" },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const addr = data.address || {};
+      const road = addr.road || addr.pedestrian || addr.suburb || "Localidade";
+      const suburb = addr.suburb || addr.city_district || "";
+      const city = addr.city || addr.town || "";
+      const addressParts = [road, suburb, city].filter(Boolean).join(", ");
+
+      const extratags = data.extratags || {};
+      const poiName = extratags.name || (data.category === "amenity" || data.category === "shop" ? data.name : undefined);
+
+      if (poiName) {
+        return {
+          name: poiName,
+          type: data.type || "Comércio",
+          distanceMeters: 3,
+          fullAddress: addressParts,
+        };
+      }
+
+      return {
+        name: `Nenhum comércio cadastrado a 3 m (Próximo a: ${addressParts})`,
+        fullAddress: addressParts,
+      };
+    }
+  } catch {
+    // Falha de rede
+  }
+
+  return {
+    name: "Nenhum ponto comercial cadastrado no raio de 3 m",
+  };
 }
 
 export function computeTrackMetrics(data: string): TrackMetrics | null {
@@ -125,17 +353,32 @@ export function computeTrackMetrics(data: string): TrackMetrics | null {
   let stationaryStopsCount = 0;
 
   for (let i = 1; i < points.length; i++) {
-    const gap = Math.max(0, (points[i].timestamp.getTime() - points[i - 1].timestamp.getTime()) / 1000);
+    const prev = points[i - 1]!;
+    const curr = points[i]!;
+    const gap = Math.max(0, (curr.timestamp.getTime() - prev.timestamp.getTime()) / 1000);
     largestGapSeconds = Math.max(largestGapSeconds, gap);
 
-    const dist = distanceMeters(points[i - 1], points[i]);
-    if (dist < 3.0) {
+    const dist = distanceMeters(prev, curr);
+    const derivedSpeedKmh = gap > 0 ? (dist / gap) * 3.6 : 0;
+    const isPaused = curr.observation?.includes("pausa detectada") || curr.speedKmh === 0;
+
+    // Se a distância for menor que 2.0m ou velocidade quase nula, conta como parada
+    if (dist < 2.5 || (curr.speedKmh !== undefined && curr.speedKmh < 1.0)) {
       stationaryStopsCount++;
     }
 
-    if (gap > 0 && gap <= 60) {
-      totalMeters += dist;
-      movingSeconds += gap;
+    // Filtra anomalias de teletransporte (velocidade > 25 km/h para caminhada em gaps curtos <= 40s)
+    // e evita acumular jitter durante pausas paradas (< 1.5m)
+    const isTeleportAnomaly = derivedSpeedKmh > 25 && gap <= 40 && dist > 80;
+    const isStationaryJitter = dist < 1.8 && derivedSpeedKmh < 1.0;
+
+    if (gap > 0 && gap <= 60 && !isTeleportAnomaly) {
+      if (!isStationaryJitter) {
+        totalMeters += dist;
+      }
+      if (!isPaused && derivedSpeedKmh >= 1.0) {
+        movingSeconds += gap;
+      }
     }
   }
 
@@ -157,6 +400,8 @@ export function computeTrackMetrics(data: string): TrackMetrics | null {
   const accuracyValues = points
     .map((p) => p.accuracyMeters)
     .filter((v): v is number => v !== undefined && Number.isFinite(v));
+
+  const pausesOver3Min = findTrackPauses(points);
 
   return {
     pointsCount: points.length,
@@ -182,38 +427,57 @@ export function computeTrackMetrics(data: string): TrackMetrics | null {
       : undefined,
     largestGapSeconds,
     stationaryStopsCount,
+    pausesOver3Min,
   };
 }
 
 export function formatTrackSummary(metrics: TrackMetrics): string {
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    if (mins >= 60) {
-      const hours = Math.floor(mins / 60);
-      const remMins = mins % 60;
-      return hours + "h " + remMins + "min " + secs + "s";
-    }
-    return mins > 0 ? mins + "min " + secs + "s" : secs + "s";
-  };
-
-  return [
+  const summaryLines = [
     "📊 **Resumo Analítico do Percurso:**",
-    "- **Pontos registrados:** " + metrics.pointsCount,
-    metrics.firstTimestamp ? "- **Início:** " + metrics.firstTimestamp.toLocaleTimeString("pt-BR") + " (" + metrics.firstTimestamp.toLocaleDateString("pt-BR") + ")" : "",
-    metrics.lastTimestamp ? "- **Fim:** " + metrics.lastTimestamp.toLocaleTimeString("pt-BR") + " (" + metrics.lastTimestamp.toLocaleDateString("pt-BR") + ")" : "",
-    "- **Duração total decorrida:** " + formatTime(metrics.durationSeconds),
-    "- **Tempo em movimento útil:** " + formatTime(metrics.movingSeconds),
-    "- **Distância acumulada:** " + metrics.totalDistanceKm.toFixed(3).replace(".", ",") + " km (" + metrics.totalDistanceMeters.toFixed(1).replace(".", ",") + " m)",
-    "- **Velocidade média em movimento:** " + metrics.averageSpeedKmh.toFixed(2).replace(".", ",") + " km/h",
-    metrics.maxReportedSpeedKmh !== undefined ? "- **Velocidade máxima registrada:** " + metrics.maxReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h" : "",
-    metrics.averageReportedSpeedKmh !== undefined ? "- **Velocidade instantânea média:** " + metrics.averageReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h" : "",
-    metrics.averageAccuracyMeters !== undefined ? "- **Precisão média do GPS:** ±" + metrics.averageAccuracyMeters.toFixed(1).replace(".", ",") + " m" : "",
-    metrics.largestGapSeconds > 10 ? "- **Maior intervalo sem dados (lacuna):** " + formatTime(metrics.largestGapSeconds) : "",
-    metrics.stationaryStopsCount > 0 ? "- **Paradas/permanências detectadas:** " + metrics.stationaryStopsCount : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    "- **Pontos registrados:** " + formatPtBrNumber(metrics.pointsCount, 0, 0),
+    metrics.firstTimestamp
+      ? "- **Início:** " + metrics.firstTimestamp.toLocaleTimeString("pt-BR") + " (" + metrics.firstTimestamp.toLocaleDateString("pt-BR") + ")"
+      : "",
+    metrics.lastTimestamp
+      ? "- **Fim:** " + metrics.lastTimestamp.toLocaleTimeString("pt-BR") + " (" + metrics.lastTimestamp.toLocaleDateString("pt-BR") + ")"
+      : "",
+    "- **Duração total decorrida:** " + formatTimePtBr(metrics.durationSeconds),
+    "- **Tempo em movimento útil:** " + formatTimePtBr(metrics.movingSeconds),
+    "- **Distância acumulada:** " + formatPtBrNumber(metrics.totalDistanceKm, 2, 3) + " km (" + formatPtBrNumber(metrics.totalDistanceMeters, 1, 1) + " m)",
+    "- **Velocidade média em movimento:** " + formatPtBrNumber(metrics.averageSpeedKmh, 1, 2) + " km/h",
+    metrics.maxReportedSpeedKmh !== undefined
+      ? "- **Velocidade máxima registrada:** " + formatPtBrNumber(metrics.maxReportedSpeedKmh, 1, 2) + " km/h"
+      : "",
+    metrics.averageReportedSpeedKmh !== undefined
+      ? "- **Velocidade instantânea média:** " + formatPtBrNumber(metrics.averageReportedSpeedKmh, 1, 2) + " km/h"
+      : "",
+    metrics.averageAccuracyMeters !== undefined
+      ? "- **Precisão média do GPS:** ±" + formatPtBrNumber(metrics.averageAccuracyMeters, 1, 1) + " m"
+      : "",
+    metrics.largestGapSeconds > 10
+      ? "- **Maior intervalo sem dados (lacuna):** " + formatTimePtBr(metrics.largestGapSeconds)
+      : "",
+    metrics.stationaryStopsCount > 0
+      ? "- **Paradas/permanências detectadas:** " + formatPtBrNumber(metrics.stationaryStopsCount, 0, 0)
+      : "",
+  ];
+
+  if (metrics.pausesOver3Min && metrics.pausesOver3Min.length > 0) {
+    summaryLines.push(
+      "",
+      `⏸️ **Pausas no Movimento Superiores a 3 Minutos (${metrics.pausesOver3Min.length}):**`
+    );
+    metrics.pausesOver3Min.forEach((p, idx) => {
+      const dur = formatTimePtBr(p.durationSeconds);
+      const start = p.startTimestamp.toLocaleTimeString("pt-BR");
+      const end = p.endTimestamp.toLocaleTimeString("pt-BR");
+      const coords = `${formatPtBrNumber(p.lat, 6, 6)}, ${formatPtBrNumber(p.lng, 6, 6)}`;
+      const poi = p.nearbyCommercialPoint ? ` — Ponto comercial (raio 3m): ${p.nearbyCommercialPoint}` : "";
+      summaryLines.push(`  ${idx + 1}. Das ${start} às ${end} (${dur}) em [${coords}]${poi}`);
+    });
+  }
+
+  return summaryLines.filter(Boolean).join("\n");
 }
 
 export function answerDisplacementQuestion(question: string, logData: string): string {
@@ -227,13 +491,13 @@ export function answerDisplacementQuestion(question: string, logData: string): s
   if (q.includes("velocidade") || q.includes("rapido") || q.includes("km/h")) {
     const parts = [
       "🚗 **Velocidade do deslocamento:**",
-      "• **Velocidade média em movimento:** " + metrics.averageSpeedKmh.toFixed(2).replace(".", ",") + " km/h (calculada considerando segmentos ativos de até 60s).",
+      "• **Velocidade média em movimento:** " + formatPtBrNumber(metrics.averageSpeedKmh, 1, 2) + " km/h (calculada considerando segmentos ativos de até 60s).",
     ];
     if (metrics.maxReportedSpeedKmh !== undefined) {
-      parts.push("• **Maior velocidade instantânea:** " + metrics.maxReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h.");
+      parts.push("• **Maior velocidade instantânea:** " + formatPtBrNumber(metrics.maxReportedSpeedKmh, 1, 2) + " km/h.");
     }
     if (metrics.averageReportedSpeedKmh !== undefined) {
-      parts.push("• **Velocidade instantânea média reportada pelo sensor GPS:** " + metrics.averageReportedSpeedKmh.toFixed(2).replace(".", ",") + " km/h.");
+      parts.push("• **Velocidade instantânea média reportada pelo sensor GPS:** " + formatPtBrNumber(metrics.averageReportedSpeedKmh, 1, 2) + " km/h.");
     }
     return parts.join("\n");
   }
@@ -241,9 +505,9 @@ export function answerDisplacementQuestion(question: string, logData: string): s
   if (q.includes("distancia") || q.includes("km") || q.includes("metros") || q.includes("quilometro") || q.includes("longe")) {
     return [
       "📏 **Distância percorrida:**",
-      "• **Distância total acumulada:** " + metrics.totalDistanceKm.toFixed(3).replace(".", ",") + " km (" + metrics.totalDistanceMeters.toFixed(1).replace(".", ",") + " metros).",
+      "• **Distância total acumulada:** " + formatPtBrNumber(metrics.totalDistanceKm, 2, 3) + " km (" + formatPtBrNumber(metrics.totalDistanceMeters, 1, 1) + " metros).",
       metrics.averageSegmentDistanceMeters !== undefined
-        ? "• **Distância média por ponto:** " + metrics.averageSegmentDistanceMeters.toFixed(1).replace(".", ",") + " metros."
+        ? "• **Distância média por ponto:** " + formatPtBrNumber(metrics.averageSegmentDistanceMeters, 1, 1) + " metros."
         : "",
     ]
       .filter(Boolean)
@@ -251,31 +515,25 @@ export function answerDisplacementQuestion(question: string, logData: string): s
   }
 
   if (q.includes("tempo") || q.includes("duracao") || q.includes("minuto") || q.includes("segundo") || q.includes("hora") || q.includes("inicio") || q.includes("fim")) {
-    const mins = Math.floor(metrics.durationSeconds / 60);
-    const secs = Math.round(metrics.durationSeconds % 60);
     return [
       "⏱️ **Tempo do percurso:**",
       "• **Início:** " + (metrics.firstTimestamp ? metrics.firstTimestamp.toLocaleTimeString("pt-BR") : ""),
       "• **Fim:** " + (metrics.lastTimestamp ? metrics.lastTimestamp.toLocaleTimeString("pt-BR") : ""),
-      "• **Duração total:** " + (mins > 0 ? mins + " min e " : "") + secs + " segundos.",
-      "• **Tempo efetivo de deslocamento:** " + Math.round(metrics.movingSeconds) + " segundos.",
+      "• **Duração total:** " + formatTimePtBr(metrics.durationSeconds),
+      "• **Tempo efetivo de deslocamento:** " + formatTimePtBr(metrics.movingSeconds),
     ].join("\n");
   }
 
-  if (q.includes("lacuna") || q.includes("falha") || q.includes("perda") || q.includes("sinal") || q.includes("parada") || q.includes("precisao")) {
+  if (q.includes("pausa") || q.includes("parada") || q.includes("comercio") || q.includes("comercial") || q.includes("loja")) {
+    if (metrics.pausesOver3Min.length === 0) {
+      return "Não foram detectadas pausas superiores a 3 minutos neste percurso.";
+    }
     return [
-      "🛰️ **Qualidade e Estabilidade do GPS:**",
-      "- **Maior intervalo sem dados (lacuna):** " + Math.round(metrics.largestGapSeconds) + " segundos.",
-      metrics.averageAccuracyMeters !== undefined
-        ? "- **Precisão média do sinal:** ±" + metrics.averageAccuracyMeters.toFixed(1) + " metros."
-        : "",
-      metrics.stationaryStopsCount > 0
-        ? "- **Registros em repouso/parada:** " + metrics.stationaryStopsCount + " ponto(s)."
-        : "",
-      "\n💡 *Dica:* Lacunas prolongadas durante a captura no celular geralmente ocorrem por otimização agressiva de bateria do Android ou perda temporária de visada com os satélites GPS.",
-    ]
-      .filter(Boolean)
-      .join("\n");
+      `⏸️ **Pausas superiores a 3 minutos detectadas (${metrics.pausesOver3Min.length}):**`,
+      ...metrics.pausesOver3Min.map((p, idx) => {
+        return `• Parada #${idx + 1}: ${formatTimePtBr(p.durationSeconds)} (das ${p.startTimestamp.toLocaleTimeString("pt-BR")} às ${p.endTimestamp.toLocaleTimeString("pt-BR")}) em ${formatPtBrNumber(p.lat, 6, 6)}, ${formatPtBrNumber(p.lng, 6, 6)}.`;
+      }),
+    ].join("\n");
   }
 
   return formatTrackSummary(metrics);

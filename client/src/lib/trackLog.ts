@@ -111,6 +111,8 @@ export interface PendingLocationLike extends AutomaticCaptureItem {
   timestamp?: string;
   mode?: "interval" | "stationary";
   gpsTimeMs?: number;
+  pauseDetected?: boolean;
+  observation?: string;
 }
 
 export interface AcceptedPendingLocation<T extends PendingLocationLike = PendingLocationLike> {

@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { computeTrackMetrics, formatTrackSummary } from "@/lib/trackAnalysis";
+import { useEffect, useState } from "react";
+import {
+  computeTrackMetrics,
+  fetchNearbyCommercialPoint,
+  formatPtBrNumber,
+  formatTimePtBr,
+  formatTrackSummary,
+  TrackPause,
+} from "@/lib/trackAnalysis";
 import { Button } from "@/components/ui/button";
 import {
   Activity,
@@ -10,10 +17,13 @@ import {
   Compass,
   Copy,
   Gauge,
+  Loader2,
+  MapPin,
   Maximize2,
   Navigation,
   PauseCircle,
   Route,
+  Store,
   Target,
   X,
 } from "lucide-react";
@@ -25,6 +35,14 @@ interface TrackStatisticsModalProps {
   onFitMap?: () => void;
 }
 
+interface CommercialPoiState {
+  name: string;
+  loading: boolean;
+  type?: string;
+  distanceMeters?: number;
+  fullAddress?: string;
+}
+
 export function TrackStatisticsModal({
   isOpen,
   onClose,
@@ -32,21 +50,48 @@ export function TrackStatisticsModal({
   onFitMap,
 }: TrackStatisticsModalProps) {
   const [copied, setCopied] = useState(false);
+  const [poiMap, setPoiMap] = useState<Record<string, CommercialPoiState>>({});
 
   if (!isOpen) return null;
 
   const metrics = computeTrackMetrics(logData);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    if (mins >= 60) {
-      const hours = Math.floor(mins / 60);
-      const remMins = mins % 60;
-      return `${hours}h ${remMins}min ${secs}s`;
-    }
-    return mins > 0 ? `${mins}min ${secs}s` : `${secs}s`;
-  };
+  // Busca pontos comerciais para pausas superiores a 3 minutos
+  useEffect(() => {
+    if (!metrics || metrics.pausesOver3Min.length === 0) return;
+
+    metrics.pausesOver3Min.forEach((pause) => {
+      if (poiMap[pause.id]) return;
+
+      setPoiMap((prev) => ({
+        ...prev,
+        [pause.id]: { name: "Buscando estabelecimento próximo...", loading: true },
+      }));
+
+      fetchNearbyCommercialPoint(pause.lat, pause.lng)
+        .then((res) => {
+          setPoiMap((prev) => ({
+            ...prev,
+            [pause.id]: {
+              name: res.name,
+              loading: false,
+              type: res.type,
+              distanceMeters: res.distanceMeters,
+              fullAddress: res.fullAddress,
+            },
+          }));
+        })
+        .catch(() => {
+          setPoiMap((prev) => ({
+            ...prev,
+            [pause.id]: {
+              name: "Nenhum ponto comercial cadastrado a 3 m",
+              loading: false,
+            },
+          }));
+        });
+    });
+  }, [metrics?.pausesOver3Min]);
 
   const handleCopy = async () => {
     if (!metrics) return;
@@ -63,9 +108,9 @@ export function TrackStatisticsModal({
   const stoppedSeconds = metrics ? Math.max(0, metrics.durationSeconds - metrics.movingSeconds) : 0;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-3 sm:p-4 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-cyan-400/30 bg-card text-card-foreground shadow-2xl">
-        {/* Cabeçalho */}
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 p-3 sm:p-4 pt-[max(env(safe-area-inset-top,0px),0.75rem)] pb-[max(env(safe-area-inset-bottom,0px),0.75rem)] backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="flex max-h-[calc(100dvh-max(env(safe-area-inset-top,0px),0.75rem)-1.5rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-cyan-400/30 bg-card text-card-foreground shadow-2xl">
+        {/* Cabeçalho seguro contra notch e status bar */}
         <div className="flex items-center justify-between border-b border-border/80 px-5 py-3.5 bg-muted/20">
           <div className="flex items-center gap-2.5 text-cyan-400">
             <div className="p-1.5 rounded-lg bg-cyan-400/10 border border-cyan-400/20">
@@ -76,7 +121,7 @@ export function TrackStatisticsModal({
                 Estatísticas do Deslocamento
               </h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Métricas calculadas a partir dos pontos registrados
+                Métricas calculadas a partir dos pontos registrados (SI / ABNT)
               </p>
             </div>
           </div>
@@ -89,7 +134,7 @@ export function TrackStatisticsModal({
           </button>
         </div>
 
-        {/* Conteúdo */}
+        {/* Conteúdo rolável */}
         <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
           {!metrics || metrics.pointsCount === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
@@ -112,11 +157,11 @@ export function TrackStatisticsModal({
                   <div>
                     <div className="font-mono text-xl sm:text-2xl font-bold text-foreground">
                       {metrics.totalDistanceKm >= 1
-                        ? `${metrics.totalDistanceKm.toFixed(2).replace(".", ",")} km`
-                        : `${metrics.totalDistanceMeters.toFixed(0)} m`}
+                        ? `${formatPtBrNumber(metrics.totalDistanceKm, 2, 2)} km`
+                        : `${formatPtBrNumber(metrics.totalDistanceMeters, 0, 0)} m`}
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
-                      {metrics.totalDistanceMeters.toFixed(1).replace(".", ",")} metros
+                      {formatPtBrNumber(metrics.totalDistanceMeters, 1, 1)} metros
                     </div>
                   </div>
                 </div>
@@ -129,10 +174,10 @@ export function TrackStatisticsModal({
                   </div>
                   <div>
                     <div className="font-mono text-xl sm:text-2xl font-bold text-foreground">
-                      {formatTime(metrics.durationSeconds)}
+                      {formatTimePtBr(metrics.durationSeconds)}
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
-                      {metrics.durationSeconds.toFixed(0)}s decorridos
+                      {formatPtBrNumber(metrics.durationSeconds, 0, 0)}s decorridos
                     </div>
                   </div>
                 </div>
@@ -145,7 +190,7 @@ export function TrackStatisticsModal({
                   </div>
                   <div>
                     <div className="font-mono text-xl sm:text-2xl font-bold text-foreground">
-                      {metrics.averageSpeedKmh.toFixed(1).replace(".", ",")}{" "}
+                      {formatPtBrNumber(metrics.averageSpeedKmh, 1, 1)}{" "}
                       <span className="text-sm font-normal text-muted-foreground">km/h</span>
                     </div>
                     <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
@@ -164,7 +209,7 @@ export function TrackStatisticsModal({
                     <span>Tempo em Movimento:</span>
                   </div>
                   <span className="font-mono font-medium text-foreground">
-                    {formatTime(metrics.movingSeconds)}
+                    {formatTimePtBr(metrics.movingSeconds)}
                   </span>
                 </div>
 
@@ -174,7 +219,7 @@ export function TrackStatisticsModal({
                     <span>Tempo em Pausa/Parado:</span>
                   </div>
                   <span className="font-mono font-medium text-foreground">
-                    {formatTime(stoppedSeconds)}
+                    {formatTimePtBr(stoppedSeconds)}
                   </span>
                 </div>
 
@@ -182,11 +227,11 @@ export function TrackStatisticsModal({
                 <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/60 p-3 text-xs">
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <ArrowUpRight className="h-4 w-4 text-red-400" />
-                    <span>Velocidade Máxima Registrada:</span>
+                    <span>Velocidade Máxima:</span>
                   </div>
                   <span className="font-mono font-medium text-foreground">
                     {metrics.maxReportedSpeedKmh !== undefined
-                      ? `${metrics.maxReportedSpeedKmh.toFixed(1).replace(".", ",")} km/h`
+                      ? `${formatPtBrNumber(metrics.maxReportedSpeedKmh, 1, 1)} km/h`
                       : "Não informada"}
                   </span>
                 </div>
@@ -199,7 +244,7 @@ export function TrackStatisticsModal({
                   </div>
                   <span className="font-mono font-medium text-foreground">
                     {metrics.averageAccuracyMeters !== undefined
-                      ? `±${metrics.averageAccuracyMeters.toFixed(1).replace(".", ",")} m`
+                      ? `±${formatPtBrNumber(metrics.averageAccuracyMeters, 1, 1)} m`
                       : "Alta / Standard"}
                   </span>
                 </div>
@@ -211,7 +256,7 @@ export function TrackStatisticsModal({
                     <span>Pontos Registrados:</span>
                   </div>
                   <span className="font-mono font-medium text-foreground">
-                    {metrics.pointsCount} ponto(s)
+                    {formatPtBrNumber(metrics.pointsCount, 0, 0)} ponto(s)
                   </span>
                 </div>
 
@@ -221,7 +266,7 @@ export function TrackStatisticsModal({
                     <span>Paradas / Permanências:</span>
                   </div>
                   <span className="font-mono font-medium text-foreground">
-                    {metrics.stationaryStopsCount} detectada(s)
+                    {formatPtBrNumber(metrics.stationaryStopsCount, 0, 0)} detectada(s)
                   </span>
                 </div>
 
@@ -245,11 +290,79 @@ export function TrackStatisticsModal({
                 )}
               </div>
 
+              {/* Seção de Pausas no Movimento Superiores a 3 Minutos */}
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3.5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-amber-400">
+                    <PauseCircle className="h-4 w-4" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">
+                      Pausas no Movimento Superiores a 3 Minutos
+                    </span>
+                  </div>
+                  <span className="font-mono text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
+                    {metrics.pausesOver3Min.length} identificada(s)
+                  </span>
+                </div>
+
+                {metrics.pausesOver3Min.length === 0 ? (
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Nenhuma parada superior a 3 minutos foi identificada neste percurso.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {metrics.pausesOver3Min.map((pause, pIdx) => {
+                      const poi = poiMap[pause.id];
+                      return (
+                        <div
+                          key={pause.id}
+                          className="rounded-lg border border-border/60 bg-background/80 p-3 text-xs space-y-1.5"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-1">
+                            <span className="font-semibold text-foreground">
+                              Parada #{pIdx + 1} · Duração: {formatTimePtBr(pause.durationSeconds)}
+                            </span>
+                            <span className="font-mono text-[11px] text-muted-foreground">
+                              {pause.startTimestamp.toLocaleTimeString("pt-BR")} às{" "}
+                              {pause.endTimestamp.toLocaleTimeString("pt-BR")}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                            <MapPin className="h-3 w-3 text-cyan-400 shrink-0" />
+                            <span>
+                              {formatPtBrNumber(pause.lat, 6, 6)}, {formatPtBrNumber(pause.lng, 6, 6)}
+                            </span>
+                          </div>
+
+                          {/* Ponto comercial próximo em raio de 3m */}
+                          <div className="flex items-start gap-2 pt-1 border-t border-border/40 text-xs">
+                            <Store className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+                            <div className="min-w-0 flex-1">
+                              <span className="text-muted-foreground font-medium">Ponto comercial próximo (raio 3m): </span>
+                              {poi?.loading ? (
+                                <span className="inline-flex items-center gap-1 text-cyan-400 font-mono text-[11px]">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                  Consultando OpenStreetMap...
+                                </span>
+                              ) : (
+                                <span className="font-medium text-foreground">
+                                  {poi?.name || "Consultando ponto comercial..."}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Alerta de lacuna se houver */}
               {metrics.largestGapSeconds > 15 && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300">
-                  ⚠️ <strong>Maior intervalo sem dados (lacuna):</strong> {formatTime(metrics.largestGapSeconds)}.
-                  Isso pode ter sido causado por economia de bateria ou túnel/área sem visada de satélite.
+                  ⚠️ <strong>Maior intervalo sem dados (lacuna):</strong> {formatTimePtBr(metrics.largestGapSeconds)}.
+                  Pode decorrer de suspensão de energia, túnel ou perda temporária de sinal.
                 </div>
               )}
             </>

@@ -127,3 +127,5 @@ android/local.properties
 *.exe
 *.zip
 *.apk
+.kotlin/
+android/.kotlin/

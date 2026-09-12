@@ -45,6 +45,8 @@ class LocationForegroundService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var consecutiveAnomalies = 0
     private var lastStoredRealtimeMs = 0L
+    private var consecutiveLowSpeedCount = 0
+    private var isIntervalPaused = false
 
     override fun onCreate() {
         super.onCreate()
@@ -103,6 +105,8 @@ class LocationForegroundService : Service() {
         stationaryCaptured = false
         consecutiveAnomalies = 0
         lastStoredRealtimeMs = 0L
+        consecutiveLowSpeedCount = 0
+        isIntervalPaused = false
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
             if (wakeLock == null) {
@@ -186,6 +190,8 @@ class LocationForegroundService : Service() {
         stationaryCaptured = false
         consecutiveAnomalies = 0
         lastStoredRealtimeMs = 0L
+        consecutiveLowSpeedCount = 0
+        isIntervalPaused = false
         try {
             wakeLock?.let {
                 if (it.isHeld) it.release()
@@ -259,6 +265,27 @@ class LocationForegroundService : Service() {
 
         lastStoredRealtimeMs = SystemClock.elapsedRealtime()
 
+        var recordWithPauseObservation = false
+        if (!stationaryMode) {
+            if (instantSpeedKmh < 1.0) {
+                if (isIntervalPaused) {
+                    // Já em pausa detectada: ignora o registro e atualiza diagnósticos
+                    updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
+                    showStatusNotification("ATIVA — em pausa (< 1 km/h); gravação suspensa")
+                    return
+                } else {
+                    consecutiveLowSpeedCount++
+                    if (consecutiveLowSpeedCount >= 2) {
+                        isIntervalPaused = true
+                        recordWithPauseObservation = true
+                    }
+                }
+            } else {
+                consecutiveLowSpeedCount = 0
+                isIntervalPaused = false
+            }
+        }
+
         val current = try { JSONArray(prefs.getString(KEY_PENDING, "[]")) } catch (_: Exception) { JSONArray() }
         val timestamp = timestamp()
         val item = JSONObject().apply {
@@ -276,6 +303,10 @@ class LocationForegroundService : Service() {
             put("intervalSeconds", prefs.getInt(KEY_INTERVAL_SECONDS, (DEFAULT_INTERVAL_MS / 1000L).toInt()))
             put("mode", if (stationaryWaitMs != null) "stationary" else "interval")
             put("waitSeconds", stationaryWaitMs?.div(1000L)?.toInt() ?: 0)
+            if (recordWithPauseObservation) {
+                put("pauseDetected", true)
+                put("observation", "pausa detectada")
+            }
         }
         current.put(item)
         val bounded = JSONArray()
@@ -350,7 +381,13 @@ class LocationForegroundService : Service() {
     }
 
     private fun updateDiagnostics(location: Location, segmentDistance: Double, elapsedSeconds: Double, instantSpeedKmh: Double) {
+        val currentGpsTime = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_LAST_TIMESTAMP, timestamp())
+            .putString(KEY_LAST_LATITUDE, location.latitude.toString())
+            .putString(KEY_LAST_LONGITUDE, location.longitude.toString())
+            .putLong(KEY_LAST_LOCATION_TIME, System.currentTimeMillis())
+            .putLong(KEY_LAST_GPS_TIME, currentGpsTime)
             .putFloat(KEY_INSTANT_SPEED_KMH, instantSpeedKmh.toFloat())
             .putFloat(KEY_LAST_SEGMENT_DISTANCE_METERS, segmentDistance.toFloat())
             .putFloat(KEY_ELAPSED_SINCE_PREVIOUS_SECONDS, if (elapsedSeconds.isFinite()) elapsedSeconds.toFloat() else 0f)
