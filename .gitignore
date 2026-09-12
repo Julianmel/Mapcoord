@@ -119,3 +119,11 @@ client/public/__manus__/version.json
 android/local.properties
 .gradle/
 **/.gradle/
+
+#Outros
+*.EXE
+*.ZIP
+*.APK
+*.exe
+*.zip
+*.apk
