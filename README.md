@@ -1,4 +1,4 @@
-# Mapa de Coordenadas (Mapcoord) - v6.2
+# Mapa de Coordenadas (Mapcoord) - v6.3
 
 Sistema especializado em telemetria cartográfica, captura contínua de coordenadas GPS em campo, visualização espacial técnica, edição interativa de vértices e análise estatística de trajetos.
 
@@ -11,13 +11,14 @@ O projeto é composto por uma **PWA (Progressive Web App)** moderna e responsiva
 ## Sumário
 
 - [Visão Geral](#visão-geral)
-- [Novidades e Recursos da Versão 6.2](#novidades-e-recursos-da-versão-62)
+- [Novidades e Recursos da Versão 6.3](#novidades-e-recursos-da-versão-63)
+- [Recursos da Versão 6.2](#recursos-da-versão-62)
 - [Modos de Captura de Coordenadas](#modos-de-captura-de-coordenadas)
 - [Visualização Cartográfica e Interatividade](#visualização-cartográfica-e-interatividade)
   - [Edição de Pontos por Arrasto (Drag & Drop)](#edição-de-pontos-por-arrasto-drag--drop)
   - [Modo "Traçar Linha" Inteligente e Limpo](#modo-traçar-linha-inteligente-e-limpo)
   - [Balão Informativo Técnico (Popup)](#balão-informativo-técnico-popup)
-  - [Padronização Decimal com Vírgula (pt-BR)](#padronização-decimal-com-vírgula-pt-br)
+  - [Padronização Decimal com Vírgula (pt-BR / SI)](#padronização-decimal-com-vírgula-pt-br--si)
   - [Personalização Cromática e Círculos de Raio](#personalização-cromática-e-círculos-de-raio)
 - [Estatísticas e Análise do Deslocamento](#estatísticas-e-análise-do-deslocamento)
 - [Filtros de Validação e Antiruído](#filtros-de-validação-e-antiruído)
@@ -42,13 +43,33 @@ A interface opera tanto em navegadores desktop/mobile quanto empacotada no aplic
 
 ---
 
-## Novidades e Recursos da Versão 6.2
+## Novidades e Recursos da Versão 6.3
+
+- **Filtro Inteligente de Baixa Velocidade (< 1 km/h) na Captura Contínua:**
+  - Identificação de paradas e imobilidade: quando o sistema detecta dois pontos consecutivos com velocidade inferior a 1 km/h, o registro seguinte é ignorado para não poluir o trajeto com deriva estática de GPS.
+  - Registro de `"pausa detectada"` no log de dados no primeiro ponto de parada.
+  - Retomada automática do registro normal assim que o movimento (> 1 km/h) for restabelecido.
+- **Detecção de Pausas > 3 min com Localização de Ponto Comercial (POI):**
+  - No log e painel de estatísticas, qualquer intervalo estacionário superior a 3 minutos é identificado e catalogado.
+  - Consulta geoespacial automática via Overpass API e OpenStreetMap Nominatim num raio de 3 metros ao redor da parada para apontar o estabelecimento comercial mais próximo (lojas, restaurantes, cafeterias, conveniências, farmácias, etc.).
+- **Ajuste de Área Segura (Safe Area / Status Bar):**
+  - Correção da sobreposição dos cabeçalhos do app sobre a barra de status e ícones do sistema no Android e Web/PWA (`fitsSystemWindows` e suporte a `env(safe-area-inset-top)`).
+  - Espaçamento superior reservado tanto no cabeçalho principal quanto nos modais (Estatísticas e Ajuda).
+- **Escala Inicial e Mínima do Raio em 0,5 metros:**
+  - O controle deslizante do raio do círculo agora tem escala mínima de **0,5 metros** e valor inicial configurado para **0,5 metros** (anteriormente 1,0 m), permitindo demarcações de alta precisão cartográfica.
+- **Padronização Numérica no Sistema Internacional / ABNT (`formatPtBrNumber`):**
+  - Substituição rigorosa de ponto por vírgula em decimais e ponto como separador de milhares em todas as métricas estatísticas (distâncias, tempos, velocidades, altimetria e precisão).
+- **Telemetria Contínua Persistente no Android:**
+  - O rodapé de diagnóstico do aplicativo agora preserva os últimos valores válidos de satélite, velocidade do sensor e sincronização mesmo após o esvaziamento da fila de posições transitórias.
+
+---
+
+## Recursos da Versão 6.2
 
 - **Edição Interativa por Arrasto (*Drag & Drop*):** Marcadores reposicionáveis diretamente no mapa com recálculo geodésico imediato.
 - **Auditoria de Correção Manual no Log:** Identificação automática no log textual e no balão do ponto: `"Ponto corrigido manualmente"`.
 - **Modo "Traçar Linha" Limpo:** Ocultação automática de pontos intermediários e círculos para despoluir a visualização, mantendo destacados apenas o Ponto Inicial (verde) e o Ponto Final (vermelho).
 - **Telemetria Completa no Balão do Ponto:** Exibição da velocidade instantânea do sensor e deslocamento em relação ao ponto anterior.
-- **Padrão Decimal Brasileiro (`pt-BR`):** Substituição de pontos por vírgula em todos os valores numéricos de distância, velocidade, precisão e raio.
 - **Novo Modal de Estatísticas do Deslocamento:** Painel determinístico com métricas consolidadas (distância total, tempo em movimento vs. parado, velocidade média/máxima, altimetria e precisão).
 - **Melhorias de GPS Nativo Android:** Provedor GNSS de hardware direto, WakeLock, prompt de desativação de economia de bateria e eliminação de atrasos de 20s em segundo plano.
 - **Build & CI/CD Automatizado:** Pipeline no GitHub Actions que compila o APK e faz deploy para o GitHub Pages a cada push na `main`.
@@ -190,7 +211,7 @@ Mapcoord/
 │   │   ├── components/       # TrackStatisticsModal, MapView, controles UI Radix
 │   │   ├── lib/              # trackLog.ts (parsing e edição), trackAnalysis.ts
 │   │   ├── pages/            # Home.tsx (interface principal de cartografia)
-│   │   └── version.ts        # Versão centralizada do aplicativo (v6.2)
+│   │   └── version.ts        # Versão centralizada do aplicativo (v6.3)
 │   └── public/               # Manifest PWA, ícones e assets estáticos
 ├── server/                   # Backend de apoio e testes (Vitest + Express)
 │   ├── track-log-helpers.test.ts # Testes unitários de parsing e edição de logs

@@ -307,7 +307,7 @@ export async function fetchNearbyCommercialPoint(
   try {
     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=19&addressdetails=1&extratags=1`;
     const res = await fetch(nominatimUrl, {
-      headers: { "User-Agent": "Mapcoord/6.2 (mapcoord@app)" },
+      headers: { "User-Agent": "Mapcoord/6.3 (mapcoord@app)" },
     });
     if (res.ok) {
       const data = await res.json();

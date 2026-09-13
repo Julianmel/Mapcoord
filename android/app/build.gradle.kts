@@ -11,8 +11,8 @@ android {
         applicationId = "com.mapacoordenadas.nativeapp"
         minSdk = 26
         targetSdk = 35
-        versionCode = 62
-        versionName = "6.2"
+        versionCode = 63
+        versionName = "6.3"
     }
 
     buildTypes {
