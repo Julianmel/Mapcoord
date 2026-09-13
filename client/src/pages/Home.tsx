@@ -2467,12 +2467,14 @@ export default function Home() {
       </footer>
 
       {/* Modal de Estatísticas do Deslocamento */}
-      <TrackStatisticsModal
-        isOpen={showTrackAnalysis}
-        onClose={() => setShowTrackAnalysis(false)}
-        logData={inputText}
-        onFitMap={handleFitAllBounds}
-      />
+      {showTrackAnalysis && (
+        <TrackStatisticsModal
+          isOpen={showTrackAnalysis}
+          onClose={() => setShowTrackAnalysis(false)}
+          logData={inputText}
+          onFitMap={handleFitAllBounds}
+        />
+      )}
 
       {/* Modal de Configuração de Cores */}
       {showColorPicker && (

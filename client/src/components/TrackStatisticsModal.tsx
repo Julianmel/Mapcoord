@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   computeTrackMetrics,
   fetchNearbyCommercialPoint,
@@ -52,13 +52,14 @@ export function TrackStatisticsModal({
   const [copied, setCopied] = useState(false);
   const [poiMap, setPoiMap] = useState<Record<string, CommercialPoiState>>({});
 
-  if (!isOpen) return null;
-
-  const metrics = computeTrackMetrics(logData);
+  const metrics = useMemo(() => {
+    if (!isOpen) return null;
+    return computeTrackMetrics(logData);
+  }, [isOpen, logData]);
 
   // Busca pontos comerciais para pausas superiores a 3 minutos
   useEffect(() => {
-    if (!metrics || metrics.pausesOver3Min.length === 0) return;
+    if (!isOpen || !metrics || metrics.pausesOver3Min.length === 0) return;
 
     metrics.pausesOver3Min.forEach((pause) => {
       if (poiMap[pause.id]) return;
@@ -91,7 +92,9 @@ export function TrackStatisticsModal({
           }));
         });
     });
-  }, [metrics?.pausesOver3Min]);
+  }, [isOpen, metrics]);
+
+  if (!isOpen) return null;
 
   const handleCopy = async () => {
     if (!metrics) return;
