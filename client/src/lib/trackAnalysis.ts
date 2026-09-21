@@ -260,14 +260,17 @@ export async function fetchNearbyCommercialPoint(
   lng: number
 ): Promise<{ name: string; type?: string; distanceMeters?: number; fullAddress?: string }> {
   try {
-    // 1. Tenta Overpass API procurando nós comerciais próximos (shop, amenity, commercial, office) em raio de 40m
-    const overpassQuery = `[out:json][timeout:6];(node(around:40,${lat},${lng})["shop"];node(around:40,${lat},${lng})["amenity"];node(around:40,${lat},${lng})["commercial"];node(around:40,${lat},${lng})["office"];way(around:40,${lat},${lng})["shop"];);out center 3;`;
+    // 1. Tenta Overpass API procurando nós e polígonos comerciais próximos (shop, amenity, commercial, office, craft) em raio de 40m
+    const overpassQuery = `[out:json][timeout:8];(node(around:40,${lat},${lng})["shop"];node(around:40,${lat},${lng})["amenity"];node(around:40,${lat},${lng})["commercial"];node(around:40,${lat},${lng})["office"];node(around:40,${lat},${lng})["craft"];way(around:40,${lat},${lng})["shop"];way(around:40,${lat},${lng})["amenity"];way(around:40,${lat},${lng})["commercial"];way(around:40,${lat},${lng})["office"];way(around:40,${lat},${lng})["craft"];);out center 5;`;
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-    const res = await fetch(overpassUrl, { signal: controller.signal });
+    const res = await fetch(overpassUrl, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
     clearTimeout(timeoutId);
 
     if (res.ok) {
@@ -289,7 +292,7 @@ export async function fetchNearbyCommercialPoint(
 
         const tags = bestElement.tags || {};
         const name = tags.name || tags.brand || tags.operator;
-        const category = tags.shop || tags.amenity || tags.commercial || tags.office || "Comércio";
+        const category = tags.shop || tags.amenity || tags.commercial || tags.office || tags.craft || "Comércio";
         if (name) {
           return {
             name,
@@ -300,7 +303,7 @@ export async function fetchNearbyCommercialPoint(
       }
     }
   } catch {
-    // Se Overpass falhar, segue para Nominatim reverse geocode
+    // Se Overpass falhar ou exceder timeout, segue para Nominatim reverse geocode
   }
 
   // 2. Fallback para Nominatim reverse geocode detalhado
@@ -320,17 +323,23 @@ export async function fetchNearbyCommercialPoint(
       const extratags = data.extratags || {};
       const poiName = extratags.name || (data.category === "amenity" || data.category === "shop" ? data.name : undefined);
 
+      const nomLat = parseFloat(data.lat);
+      const nomLon = parseFloat(data.lon);
+      const realDist = (!isNaN(nomLat) && !isNaN(nomLon))
+        ? Math.round(distanceMeters({ lat, lng }, { lat: nomLat, lng: nomLon }) * 10) / 10
+        : 40;
+
       if (poiName) {
         return {
           name: poiName,
           type: data.type || "Comércio",
-          distanceMeters: 40,
+          distanceMeters: realDist,
           fullAddress: addressParts,
         };
       }
 
       return {
-        name: `Nenhum comércio cadastrado a 40 m (Próximo a: ${addressParts})`,
+        name: `Nenhum comércio cadastrado no raio de 40 m (Próximo a: ${addressParts})`,
         fullAddress: addressParts,
       };
     }

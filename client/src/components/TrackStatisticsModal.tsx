@@ -86,7 +86,7 @@ export function TrackStatisticsModal({
           setPoiMap((prev) => ({
             ...prev,
             [pause.id]: {
-              name: "Nenhum ponto comercial cadastrado a 3 m",
+              name: "Nenhum ponto comercial cadastrado no raio de 40 m",
               loading: false,
             },
           }));
