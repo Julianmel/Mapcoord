@@ -337,11 +337,11 @@ export function TrackStatisticsModal({
                             </span>
                           </div>
 
-                          {/* Ponto comercial próximo em raio de 3m */}
+                          {/* Ponto comercial próximo em raio de 40m */}
                           <div className="flex items-start gap-2 pt-1 border-t border-border/40 text-xs">
                             <Store className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
                             <div className="min-w-0 flex-1">
-                              <span className="text-muted-foreground font-medium">Ponto comercial próximo (raio 3m): </span>
+                              <span className="text-muted-foreground font-medium">Ponto comercial próximo (raio 40m): </span>
                               {poi?.loading ? (
                                 <span className="inline-flex items-center gap-1 text-cyan-400 font-mono text-[11px]">
                                   <Loader2 className="h-3 w-3 animate-spin" />

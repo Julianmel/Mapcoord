@@ -635,9 +635,9 @@ export default function Home() {
         const effectiveSpeed = speedKmh ?? derivedSpeedKmh ?? 0;
 
         let isPauseDetected = false;
-        if (effectiveSpeed < 1.0) {
+        if (effectiveSpeed <= 3.0) {
           if (isIntervalPausedRef.current) {
-            setStatus({ type: "info", message: "Em pausa (< 1 km/h). Registros suspensos até novo movimento." });
+            setStatus({ type: "info", message: "Em pausa (<= 3 km/h). Registros suspensos até novo movimento." });
             return;
           }
           consecutiveLowSpeedCountRef.current += 1;
@@ -661,7 +661,7 @@ export default function Home() {
         })}${addSegmentMetadata(latitude, longitude, timestamp)}`;
         setInputText((prev) => appendLogRecord(prev, novaCoord));
         if (isPauseDetected) {
-          setStatus({ type: "info", message: "Pausa detectada (< 1 km/h). Registros seguintes serão suspensos até haver deslocamento." });
+          setStatus({ type: "info", message: "Pausa detectada (<= 3 km/h). Registros seguintes serão suspensos até haver deslocamento." });
         }
       };
 
@@ -2049,9 +2049,9 @@ export default function Home() {
                     const effectiveSpeed = speedKmh ?? derivedSpeedKmh ?? 0;
 
                     let isPauseDetected = false;
-                    if (effectiveSpeed < 1.0) {
+                    if (effectiveSpeed <= 3.0) {
                       if (isIntervalPausedRef.current) {
-                        setStatus({ type: "info", message: "Em pausa (< 1 km/h). Registros suspensos até novo movimento." });
+                        setStatus({ type: "info", message: "Em pausa (<= 3 km/h). Registros suspensos até novo movimento." });
                         return;
                       }
                       consecutiveLowSpeedCountRef.current += 1;
@@ -2075,7 +2075,7 @@ export default function Home() {
                     })}${addSegmentMetadata(latitude, longitude, timestamp)}`;
                     setInputText((prev) => appendLogRecord(prev, novaCoord));
                     if (isPauseDetected) {
-                      setStatus({ type: "info", message: "Pausa detectada (< 1 km/h). Registros seguintes serão suspensos até haver deslocamento." });
+                      setStatus({ type: "info", message: "Pausa detectada (<= 3 km/h). Registros seguintes serão suspensos até haver deslocamento." });
                     }
                   };
 
@@ -2179,12 +2179,20 @@ export default function Home() {
               id="coordinate-data"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="[AAAAMMDDhhmmss] observação, lat,lng; [AAAAMMDDhhmmss] observação, lat,lng"
+              placeholder={"[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;\n; [20260921120000] Coleta #1 (intervalo 5s), -16.743100,-49.089900, 321.4, 773.5, 12.0, 1.2, 5.3, 15.2, 5.0"}
               className="field-sizing-fixed h-[220px] min-h-[200px] max-h-[320px] w-full resize-y overflow-y-auto bg-background font-mono text-sm leading-relaxed border-border focus:border-primary/50 transition-colors"
             />
-            <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
-              Você pode editar o texto manualmente. Os dados permanecem salvos neste dispositivo.
-            </p>
+            <div className="px-1 flex flex-col gap-1 text-[10px] leading-relaxed text-muted-foreground">
+              <p className="font-mono text-cyan-400 font-medium break-all">
+                Estrutura dos dados: <span className="text-foreground">[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;</span>
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                (timestamp: AAAAMMDDhhmmss · obs: observação · lat,lng: coordenadas · dir: direção em graus · alt: altitude em m · speed: velocidade em km/h · speed_acc: precisão da velocidade · acc: precisão horizontal em m · dist: distância do segmento em m · time: tempo em s)
+              </p>
+              <p className="text-[10px] text-muted-foreground/80">
+                Você pode editar o texto manualmente. Os dados permanecem salvos neste dispositivo.
+              </p>
+            </div>
           </div>
 
           {nativeDiagnostics && (

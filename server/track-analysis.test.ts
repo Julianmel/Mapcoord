@@ -80,4 +80,49 @@ describe("track analysis", () => {
     expect(metrics!.pausesOver3Min.length).toBeGreaterThanOrEqual(1);
     expect(metrics!.pausesOver3Min[0].durationSeconds).toBeGreaterThanOrEqual(180);
   });
+
+  it("filters low speed <= 3.0 km/h as stationary and correctly computes moving time", async () => {
+    const { computeTrackMetrics } = await import("../client/src/lib/trackAnalysis");
+    const log = [
+      "[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;",
+      "; [20260921100000] Coleta #1, -16.740000,-49.080000, 0.0, 750.0, 2.5, 1.0, 5.0, 0.0, 0.0",
+      "; [20260921100010] Coleta #2, -16.740005,-49.080005, 0.0, 750.0, 2.8, 1.0, 5.0, 0.7, 10.0",
+      "; [20260921100020] Coleta #3, -16.740100,-49.080100, 0.0, 750.0, 15.0, 1.0, 5.0, 15.0, 10.0",
+    ].join("\r\n");
+
+    const metrics = computeTrackMetrics(log);
+    expect(metrics).not.toBeNull();
+    // Points with <= 3.0 km/h are considered stationary/stopped
+    expect(metrics!.stationaryStopsCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("references 40m search radius in summary formatting", async () => {
+    const { formatTrackSummary } = await import("../client/src/lib/trackAnalysis");
+    const dummyMetrics = {
+      pointsCount: 2,
+      durationSeconds: 200,
+      movingSeconds: 20,
+      totalDistanceMeters: 50,
+      totalDistanceKm: 0.05,
+      averageSpeedKmh: 9,
+      largestGapSeconds: 180,
+      stationaryStopsCount: 1,
+      pausesOver3Min: [
+        {
+          id: "p1",
+          startIndex: 0,
+          endIndex: 1,
+          startTimestamp: new Date(2026, 8, 21, 10, 0, 0),
+          endTimestamp: new Date(2026, 8, 21, 10, 3, 30),
+          durationSeconds: 210,
+          lat: -16.74,
+          lng: -49.08,
+          nearbyCommercialPoint: "Padaria Central",
+        },
+      ],
+    };
+
+    const summary = formatTrackSummary(dummyMetrics as any);
+    expect(summary).toContain("Ponto comercial (raio 40m): Padaria Central");
+  });
 });

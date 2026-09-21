@@ -267,11 +267,11 @@ class LocationForegroundService : Service() {
 
         var recordWithPauseObservation = false
         if (!stationaryMode) {
-            if (instantSpeedKmh < 1.0) {
+            if (instantSpeedKmh <= 3.0) {
                 if (isIntervalPaused) {
                     // Já em pausa detectada: ignora o registro e atualiza diagnósticos
                     updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
-                    showStatusNotification("ATIVA — em pausa (< 1 km/h); gravação suspensa")
+                    showStatusNotification("ATIVA — em pausa (<= 3 km/h); gravação suspensa")
                     return
                 } else {
                     consecutiveLowSpeedCount++
@@ -491,6 +491,6 @@ class LocationForegroundService : Service() {
         const val MAX_PENDING = 10000
         const val MAX_ACCEPTED_SPEED_KMH = 220.0
         const val MAX_ACCEPTED_ACCURACY_METERS = 85.0
-        const val MAX_STATIONARY_SPEED_KMH = 2.5
+        const val MAX_STATIONARY_SPEED_KMH = 3.0
     }
 }

@@ -129,3 +129,6 @@ android/local.properties
 *.apk
 .kotlin/
 android/.kotlin/
+
+# Pasta de dados para testes e outros
+dados/

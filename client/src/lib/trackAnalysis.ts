@@ -253,15 +253,15 @@ export function findTrackPauses(points: TrackPoint[]): TrackPause[] {
 }
 
 /**
- * Consulta estabelecimento comercial próximo (em raio de 3 a 15 metros) via Overpass / Nominatim.
+ * Consulta estabelecimento comercial próximo (em raio de 40 metros) via Overpass / Nominatim.
  */
 export async function fetchNearbyCommercialPoint(
   lat: number,
   lng: number
 ): Promise<{ name: string; type?: string; distanceMeters?: number; fullAddress?: string }> {
   try {
-    // 1. Tenta Overpass API procurando nós comerciais próximos (shop, amenity, commercial, office)
-    const overpassQuery = `[out:json][timeout:6];(node(around:20,${lat},${lng})["shop"];node(around:20,${lat},${lng})["amenity"];node(around:20,${lat},${lng})["commercial"];node(around:20,${lat},${lng})["office"];way(around:20,${lat},${lng})["shop"];);out center 3;`;
+    // 1. Tenta Overpass API procurando nós comerciais próximos (shop, amenity, commercial, office) em raio de 40m
+    const overpassQuery = `[out:json][timeout:6];(node(around:40,${lat},${lng})["shop"];node(around:40,${lat},${lng})["amenity"];node(around:40,${lat},${lng})["commercial"];node(around:40,${lat},${lng})["office"];way(around:40,${lat},${lng})["shop"];);out center 3;`;
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
 
     const controller = new AbortController();
@@ -307,7 +307,7 @@ export async function fetchNearbyCommercialPoint(
   try {
     const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=19&addressdetails=1&extratags=1`;
     const res = await fetch(nominatimUrl, {
-      headers: { "User-Agent": "Mapcoord/6.3 (mapcoord@app)" },
+      headers: { "User-Agent": "Mapcoord/6.3.1 (mapcoord@app)" },
     });
     if (res.ok) {
       const data = await res.json();
@@ -324,13 +324,13 @@ export async function fetchNearbyCommercialPoint(
         return {
           name: poiName,
           type: data.type || "Comércio",
-          distanceMeters: 3,
+          distanceMeters: 40,
           fullAddress: addressParts,
         };
       }
 
       return {
-        name: `Nenhum comércio cadastrado a 3 m (Próximo a: ${addressParts})`,
+        name: `Nenhum comércio cadastrado a 40 m (Próximo a: ${addressParts})`,
         fullAddress: addressParts,
       };
     }
@@ -339,7 +339,7 @@ export async function fetchNearbyCommercialPoint(
   }
 
   return {
-    name: "Nenhum ponto comercial cadastrado no raio de 3 m",
+    name: "Nenhum ponto comercial cadastrado no raio de 40 m",
   };
 }
 
@@ -362,21 +362,21 @@ export function computeTrackMetrics(data: string): TrackMetrics | null {
     const derivedSpeedKmh = gap > 0 ? (dist / gap) * 3.6 : 0;
     const isPaused = curr.observation?.includes("pausa detectada") || curr.speedKmh === 0;
 
-    // Se a distância for menor que 2.0m ou velocidade quase nula, conta como parada
-    if (dist < 2.5 || (curr.speedKmh !== undefined && curr.speedKmh < 1.0)) {
+    // Se a distância for menor que 2.5m ou velocidade <= 3.0 km/h, conta como parada
+    if (dist < 2.5 || (curr.speedKmh !== undefined && curr.speedKmh <= 3.0)) {
       stationaryStopsCount++;
     }
 
     // Filtra anomalias de teletransporte (velocidade > 25 km/h para caminhada em gaps curtos <= 40s)
-    // e evita acumular jitter durante pausas paradas (< 1.5m)
+    // e evita acumular jitter durante pausas paradas (< 1.8m com velocidade <= 3.0 km/h)
     const isTeleportAnomaly = derivedSpeedKmh > 25 && gap <= 40 && dist > 80;
-    const isStationaryJitter = dist < 1.8 && derivedSpeedKmh < 1.0;
+    const isStationaryJitter = dist < 1.8 && derivedSpeedKmh <= 3.0;
 
     if (gap > 0 && gap <= 60 && !isTeleportAnomaly) {
       if (!isStationaryJitter) {
         totalMeters += dist;
       }
-      if (!isPaused && derivedSpeedKmh >= 1.0) {
+      if (!isPaused && derivedSpeedKmh > 3.0) {
         movingSeconds += gap;
       }
     }
@@ -472,7 +472,7 @@ export function formatTrackSummary(metrics: TrackMetrics): string {
       const start = p.startTimestamp.toLocaleTimeString("pt-BR");
       const end = p.endTimestamp.toLocaleTimeString("pt-BR");
       const coords = `${formatPtBrNumber(p.lat, 6, 6)}, ${formatPtBrNumber(p.lng, 6, 6)}`;
-      const poi = p.nearbyCommercialPoint ? ` — Ponto comercial (raio 3m): ${p.nearbyCommercialPoint}` : "";
+      const poi = p.nearbyCommercialPoint ? ` — Ponto comercial (raio 40m): ${p.nearbyCommercialPoint}` : "";
       summaryLines.push(`  ${idx + 1}. Das ${start} às ${end} (${dur}) em [${coords}]${poi}`);
     });
   }

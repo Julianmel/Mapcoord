@@ -1,4 +1,4 @@
-# Mapa de Coordenadas (Mapcoord) - v6.3
+# Mapa de Coordenadas (Mapcoord) - v6.3.1
 
 Sistema especializado em telemetria cartográfica, captura contínua de coordenadas GPS em campo, visualização espacial técnica, edição interativa de vértices e análise estatística de trajetos.
 
@@ -11,7 +11,8 @@ O projeto é composto por uma **PWA (Progressive Web App)** moderna e responsiva
 ## Sumário
 
 - [Visão Geral](#visão-geral)
-- [Novidades e Recursos da Versão 6.3](#novidades-e-recursos-da-versão-63)
+- [Novidades e Recursos da Versão 6.3.1](#novidades-e-recursos-da-versão-631)
+- [Recursos da Versão 6.3](#recursos-da-versão-63)
 - [Recursos da Versão 6.2](#recursos-da-versão-62)
 - [Modos de Captura de Coordenadas](#modos-de-captura-de-coordenadas)
 - [Visualização Cartográfica e Interatividade](#visualização-cartográfica-e-interatividade)
@@ -31,19 +32,21 @@ O projeto é composto por uma **PWA (Progressive Web App)** moderna e responsiva
 
 ---
 
-## Visão Geral
+## Novidades e Recursos da Versão 6.3.1
 
-O **Mapa de Coordenadas** foi desenvolvido com foco em aplicações técnicas de campo (engenharia, agrimensura, inspeções, fiscalização, frotas e logística). Ele resolve as principais limitações de navegadores móveis tradicionais:
-1. Suspensão da coleta GPS pelo sistema operacional quando a tela é bloqueada ou o usuário alterna de aplicativo.
-2. Dificuldade de corrigir vértices imprecisos causados por deriva momentânea de satélite.
-3. Poluição visual ao traçar rotas com centenas de pontos.
-4. Falta de métricas imediatas e determinísticas de deslocamento em campo.
-
-A interface opera tanto em navegadores desktop/mobile quanto empacotada no aplicativo nativo Android via ponte bidirecional JavaScript (`window.AndroidGps`) integrada a um **Serviço em Primeiro Plano (Foreground Service)**.
+- **Ajuste do Filtro de Baixa Velocidade para $\le$ 3 km/h:**
+  - O limiar de corte de imobilidade na captura contínua foi atualizado de `< 1 km/h` para `$\le$ 3 km/h`, eliminando com maior robustez o ruído e oscilação de GPS parado (caminhada muito lenta, pedestres parados ou semáforos).
+  - Suspensão completa da gravação de dados ao detectar pausa: após o registro inicial de `"pausa detectada"`, nenhum ponto repetido é gerado até que novo movimento (> 3 km/h) seja detectado pelo sensor.
+- **Busca de Estabelecimentos Comerciais Próximos (POI) em Raio de 40 Metros:**
+  - A pesquisa automática de pontos de interesse nas paradas superiores a 3 minutos agora utiliza um raio expandido de **40 metros** (anteriormente 3 metros), cobrindo com precisão comércios e edificações adjacentes às vias no OpenStreetMap.
+- **Atualização da Estrutura dos Dados na Área de Coleta:**
+  - A interface principal do app agora exibe com clareza a especificação completa e moderna dos campos armazenados no log:
+    `[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;`
+  - Explicação detalhada de cada metadado geodésico diretamente abaixo do campo de texto da coleta, substituindo referências antigas da v1.0.
 
 ---
 
-## Novidades e Recursos da Versão 6.3
+## Recursos da Versão 6.3
 
 - **Filtro Inteligente de Baixa Velocidade (< 1 km/h) na Captura Contínua:**
   - Identificação de paradas e imobilidade: quando o sistema detecta dois pontos consecutivos com velocidade inferior a 1 km/h, o registro seguinte é ignorado para não poluir o trajeto com deriva estática de GPS.
@@ -211,7 +214,7 @@ Mapcoord/
 │   │   ├── components/       # TrackStatisticsModal, MapView, controles UI Radix
 │   │   ├── lib/              # trackLog.ts (parsing e edição), trackAnalysis.ts
 │   │   ├── pages/            # Home.tsx (interface principal de cartografia)
-│   │   └── version.ts        # Versão centralizada do aplicativo (v6.3)
+│   │   └── version.ts        # Versão centralizada do aplicativo (v6.3.1)
 │   └── public/               # Manifest PWA, ícones e assets estáticos
 ├── server/                   # Backend de apoio e testes (Vitest + Express)
 │   ├── track-log-helpers.test.ts # Testes unitários de parsing e edição de logs
