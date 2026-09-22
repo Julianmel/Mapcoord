@@ -253,15 +253,24 @@ export function findTrackPauses(points: TrackPoint[]): TrackPause[] {
 }
 
 /**
- * Consulta estabelecimento comercial próximo (em raio de 40 metros) via Overpass / Nominatim.
+ * Consulta estabelecimento comercial próximo (em raio estrito de 40m com expansão adaptativa de até 100m) via Overpass / Nominatim.
  */
 export async function fetchNearbyCommercialPoint(
   lat: number,
   lng: number
-): Promise<{ name: string; type?: string; distanceMeters?: number; fullAddress?: string }> {
+): Promise<{
+  name: string;
+  type?: string;
+  distanceMeters?: number;
+  fullAddress?: string;
+  googleMapsUrl?: string;
+  osmFound?: boolean;
+}> {
+  const googleMapsUrl = `https://www.google.com/maps/search/comercio/@${lat},${lng},18z`;
+
   try {
-    // 1. Tenta Overpass API procurando nós e polígonos comerciais próximos (shop, amenity, commercial, office, craft) em raio de 40m
-    const overpassQuery = `[out:json][timeout:8];(node(around:40,${lat},${lng})["shop"];node(around:40,${lat},${lng})["amenity"];node(around:40,${lat},${lng})["commercial"];node(around:40,${lat},${lng})["office"];node(around:40,${lat},${lng})["craft"];way(around:40,${lat},${lng})["shop"];way(around:40,${lat},${lng})["amenity"];way(around:40,${lat},${lng})["commercial"];way(around:40,${lat},${lng})["office"];way(around:40,${lat},${lng})["craft"];);out center 5;`;
+    // 1. Tenta Overpass API procurando nós e polígonos comerciais próximos (raio adaptativo de até 100m)
+    const overpassQuery = `[out:json][timeout:8];(node(around:100,${lat},${lng})["shop"];node(around:100,${lat},${lng})["amenity"];node(around:100,${lat},${lng})["commercial"];node(around:100,${lat},${lng})["office"];node(around:100,${lat},${lng})["craft"];node(around:100,${lat},${lng})["healthcare"];way(around:100,${lat},${lng})["shop"];way(around:100,${lat},${lng})["amenity"];way(around:100,${lat},${lng})["commercial"];way(around:100,${lat},${lng})["office"];way(around:100,${lat},${lng})["craft"];way(around:100,${lat},${lng})["building"="commercial"];way(around:100,${lat},${lng})["building"="retail"];way(around:100,${lat},${lng})["healthcare"];);out center 10;`;
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
 
     const controller = new AbortController();
@@ -291,13 +300,28 @@ export async function fetchNearbyCommercialPoint(
         }
 
         const tags = bestElement.tags || {};
-        const name = tags.name || tags.brand || tags.operator;
-        const category = tags.shop || tags.amenity || tags.commercial || tags.office || tags.craft || "Comércio";
-        if (name) {
+        const rawName = tags.name || tags.brand || tags.operator;
+        const category =
+          tags.shop ||
+          tags.amenity ||
+          tags.commercial ||
+          tags.office ||
+          tags.craft ||
+          tags.healthcare ||
+          "Comércio";
+
+        if (rawName) {
+          const distRounded = Math.round(minD * 10) / 10;
+          const displayName =
+            distRounded <= 40
+              ? rawName
+              : `${rawName} (a ${Math.round(distRounded)} m)`;
           return {
-            name,
+            name: displayName,
             type: category,
-            distanceMeters: Math.round(minD * 10) / 10,
+            distanceMeters: distRounded,
+            googleMapsUrl,
+            osmFound: true,
           };
         }
       }
@@ -321,13 +345,18 @@ export async function fetchNearbyCommercialPoint(
       const addressParts = [road, suburb, city].filter(Boolean).join(", ");
 
       const extratags = data.extratags || {};
-      const poiName = extratags.name || (data.category === "amenity" || data.category === "shop" ? data.name : undefined);
+      const poiName =
+        extratags.name ||
+        (data.category === "amenity" || data.category === "shop"
+          ? data.name
+          : undefined);
 
       const nomLat = parseFloat(data.lat);
       const nomLon = parseFloat(data.lon);
-      const realDist = (!isNaN(nomLat) && !isNaN(nomLon))
-        ? Math.round(distanceMeters({ lat, lng }, { lat: nomLat, lng: nomLon }) * 10) / 10
-        : 40;
+      const realDist =
+        !isNaN(nomLat) && !isNaN(nomLon)
+          ? Math.round(distanceMeters({ lat, lng }, { lat: nomLat, lng: nomLon }) * 10) / 10
+          : 40;
 
       if (poiName) {
         return {
@@ -335,12 +364,17 @@ export async function fetchNearbyCommercialPoint(
           type: data.type || "Comércio",
           distanceMeters: realDist,
           fullAddress: addressParts,
+          googleMapsUrl,
+          osmFound: true,
         };
       }
 
       return {
-        name: `Nenhum comércio cadastrado no raio de 40 m (Próximo a: ${addressParts})`,
+        name: `Nenhum comércio cadastrado no OSM a 40m (Próximo a: ${addressParts})`,
         fullAddress: addressParts,
+        distanceMeters: realDist,
+        googleMapsUrl,
+        osmFound: false,
       };
     }
   } catch {
@@ -349,6 +383,8 @@ export async function fetchNearbyCommercialPoint(
 
   return {
     name: "Nenhum ponto comercial cadastrado no raio de 40 m",
+    googleMapsUrl,
+    osmFound: false,
   };
 }
 
@@ -499,7 +535,8 @@ export function formatTrackSummary(metrics: TrackMetrics): string {
       const end = p.endTimestamp.toLocaleTimeString("pt-BR");
       const coords = `${formatPtBrNumber(p.lat, 6, 6)}, ${formatPtBrNumber(p.lng, 6, 6)}`;
       const poi = p.nearbyCommercialPoint ? ` — Ponto comercial (raio 40m): ${p.nearbyCommercialPoint}` : "";
-      summaryLines.push(`  ${idx + 1}. Das ${start} às ${end} (${dur}) em [${coords}]${poi}`);
+      const gmaps = ` — Google Maps: https://www.google.com/maps/search/comercio/@${p.lat},${p.lng},18z`;
+      summaryLines.push(`  ${idx + 1}. Das ${start} às ${end} (${dur}) em [${coords}]${poi}${gmaps}`);
     });
   }
 

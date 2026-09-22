@@ -16,6 +16,7 @@ import {
   Clock,
   Compass,
   Copy,
+  ExternalLink,
   Gauge,
   Loader2,
   MapPin,
@@ -23,6 +24,7 @@ import {
   Navigation,
   PauseCircle,
   Route,
+  Search,
   Store,
   Target,
   X,
@@ -41,6 +43,8 @@ interface CommercialPoiState {
   type?: string;
   distanceMeters?: number;
   fullAddress?: string;
+  googleMapsUrl?: string;
+  osmFound?: boolean;
 }
 
 export function TrackStatisticsModal({
@@ -79,6 +83,8 @@ export function TrackStatisticsModal({
               type: res.type,
               distanceMeters: res.distanceMeters,
               fullAddress: res.fullAddress,
+              googleMapsUrl: res.googleMapsUrl,
+              osmFound: res.osmFound,
             },
           }));
         })
@@ -88,6 +94,8 @@ export function TrackStatisticsModal({
             [pause.id]: {
               name: "Nenhum ponto comercial cadastrado no raio de 40 m",
               loading: false,
+              googleMapsUrl: `https://www.google.com/maps/search/comercio/@${pause.lat},${pause.lng},18z`,
+              osmFound: false,
             },
           }));
         });
@@ -337,20 +345,42 @@ export function TrackStatisticsModal({
                             </span>
                           </div>
 
-                          {/* Ponto comercial próximo em raio de 40m */}
+                          {/* Ponto comercial próximo */}
                           <div className="flex items-start gap-2 pt-1 border-t border-border/40 text-xs">
                             <Store className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
                             <div className="min-w-0 flex-1">
-                              <span className="text-muted-foreground font-medium">Ponto comercial próximo (raio 40m): </span>
+                              <span className="text-muted-foreground font-medium">Ponto comercial próximo: </span>
                               {poi?.loading ? (
                                 <span className="inline-flex items-center gap-1 text-cyan-400 font-mono text-[11px]">
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                   Consultando OpenStreetMap...
                                 </span>
                               ) : (
-                                <span className="font-medium text-foreground">
-                                  {poi?.name || "Consultando ponto comercial..."}
-                                </span>
+                                <div className="space-y-1.5 mt-0.5">
+                                  <div className="font-medium text-foreground">
+                                    {poi?.name || "Consultando ponto comercial..."}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                                    <a
+                                      href={`https://www.google.com/maps/search/comercio/@${pause.lat},${pause.lng},18z`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 font-medium text-[11px] text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+                                    >
+                                      <Search className="h-3 w-3" />
+                                      Ver comércios no Google Maps
+                                    </a>
+                                    <a
+                                      href={`https://www.google.com/maps/search/?api=1&query=${pause.lat},${pause.lng}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 font-medium text-[11px] text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      Abrir local no Maps
+                                    </a>
+                                  </div>
+                                </div>
                               )}
                             </div>
                           </div>
