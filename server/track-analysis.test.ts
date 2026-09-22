@@ -125,4 +125,49 @@ describe("track analysis", () => {
     const summary = formatTrackSummary(dummyMetrics as any);
     expect(summary).toContain("Ponto comercial (raio 40m): Padaria Central");
   });
+
+  it("correctly computes complete distance for vehicular highway travel (Issue #4: 60-100 km/h)", async () => {
+    const { computeTrackMetrics } = await import("../client/src/lib/trackAnalysis");
+    // Simula trajeto rodoviário a ~90 km/h (25 m/s) com amostras a cada 5s (~125m por segmento)
+    const lines = [
+      "[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;",
+    ];
+    let lat = -16.700000;
+    const lng = -49.000000;
+    // 20 pontos = 19 segmentos de ~125 metros (~2.375 km no total)
+    for (let i = 0; i < 20; i++) {
+      const second = String((i * 5) % 60).padStart(2, "0");
+      const minute = String(Math.floor((i * 5) / 60)).padStart(2, "0");
+      lat += 0.001124; // ~125m em latitude
+      lines.push(
+        `; [2026092210${minute}${second}] Coleta #${i + 1} (intervalo 5s), ${lat.toFixed(6)},${lng.toFixed(6)}, 0.0, 750.0, 90.0, 1.0, 5.0, 125.0, 5.0`
+      );
+    }
+
+    const metrics = computeTrackMetrics(lines.join("\r\n"));
+    expect(metrics).not.toBeNull();
+    // A distância total não pode ter sido descartada pelo antigo filtro de 25 km/h
+    expect(metrics!.totalDistanceKm).toBeGreaterThan(2.0);
+    expect(metrics!.totalDistanceKm).toBeLessThan(2.6);
+    expect(metrics!.averageSpeedKmh).toBeGreaterThan(80);
+    expect(metrics!.movingSeconds).toBe(95); // 19 segmentos * 5s
+  });
+
+  it("ignores stationary GPS jitter while stopped without inflating total distance", async () => {
+    const { computeTrackMetrics } = await import("../client/src/lib/trackAnalysis");
+    const lines = [
+      "[timestamp], obs, lat, lng, dir, alt, speed, speed_acc, acc, dist, time;",
+      "; [20260922100000] Coleta #1, -16.700000,-49.000000, 0.0, 750.0, 0.5, 1.0, 5.0, 0.0, 0.0",
+      "; [20260922100005] Coleta #2, -16.700008,-49.000005, 0.0, 750.0, 1.2, 1.0, 5.0, 1.0, 5.0",
+      "; [20260922100010] Coleta #3, -16.700002,-49.000002, 0.0, 750.0, 0.8, 1.0, 5.0, 0.8, 5.0",
+      "; [20260922100015] Coleta #4, -16.700009,-49.000007, 0.0, 750.0, 0.4, 1.0, 5.0, 0.9, 5.0",
+    ];
+
+    const metrics = computeTrackMetrics(lines.join("\r\n"));
+    expect(metrics).not.toBeNull();
+    // Ruídos menores que 1.8m a <= 3.0 km/h devem ser filtrados
+    expect(metrics!.totalDistanceMeters).toBe(0);
+    expect(metrics!.stationaryStopsCount).toBeGreaterThanOrEqual(3);
+  });
 });
+

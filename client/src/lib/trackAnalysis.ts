@@ -369,23 +369,40 @@ export function computeTrackMetrics(data: string): TrackMetrics | null {
 
     const dist = distanceMeters(prev, curr);
     const derivedSpeedKmh = gap > 0 ? (dist / gap) * 3.6 : 0;
-    const isPaused = curr.observation?.includes("pausa detectada") || curr.speedKmh === 0;
+    const effectiveSpeedKmh =
+      curr.speedKmh !== undefined && Number.isFinite(curr.speedKmh)
+        ? curr.speedKmh
+        : derivedSpeedKmh;
+    const isPaused =
+      curr.observation?.includes("pausa detectada") ||
+      curr.speedKmh === 0 ||
+      effectiveSpeedKmh <= 3.0;
 
-    // Se a distância for menor que 2.5m ou velocidade <= 3.0 km/h, conta como parada
-    if (dist < 2.5 || (curr.speedKmh !== undefined && curr.speedKmh <= 3.0)) {
+    // Se a distância for menor que 2.0m ou a velocidade for <= 3.0 km/h, conta como parada
+    if (dist < 2.0 || effectiveSpeedKmh <= 3.0) {
       stationaryStopsCount++;
     }
 
-    // Filtra anomalias de teletransporte (velocidade > 25 km/h para caminhada em gaps curtos <= 40s)
-    // e evita acumular jitter durante pausas paradas (< 1.8m com velocidade <= 3.0 km/h)
-    const isTeleportAnomaly = derivedSpeedKmh > 25 && gap <= 40 && dist > 80;
-    const isStationaryJitter = dist < 1.8 && derivedSpeedKmh <= 3.0;
+    // Filtra apenas anomalias reais de teletransporte (velocidade derivada acima de 220 km/h
+    // ou saltos extremos de posição em curtíssimo intervalo sem validação do sensor GPS),
+    // suportando integralmente tráfego urbano e rodovias (50 a 120+ km/h).
+    const isSensorSpeedPlausible =
+      curr.speedKmh !== undefined &&
+      Number.isFinite(curr.speedKmh) &&
+      curr.speedKmh <= 220;
+    const isTeleportAnomaly =
+      !isSensorSpeedPlausible &&
+      (derivedSpeedKmh > 220 || (gap <= 5 && dist > 350));
 
-    if (gap > 0 && gap <= 60 && !isTeleportAnomaly) {
+    // Evita acumular jitter/ruído de GPS durante paradas (< 1.8m com velocidade <= 3.0 km/h)
+    const isStationaryJitter = dist < 1.8 && effectiveSpeedKmh <= 3.0;
+
+    // Considera segmentos de deslocamento de até 180s (limiar para pausas prolongadas)
+    if (gap > 0 && gap <= 180 && !isTeleportAnomaly) {
       if (!isStationaryJitter) {
         totalMeters += dist;
       }
-      if (!isPaused && derivedSpeedKmh > 3.0) {
+      if (!isPaused && effectiveSpeedKmh > 3.0) {
         movingSeconds += gap;
       }
     }
@@ -500,7 +517,7 @@ export function answerDisplacementQuestion(question: string, logData: string): s
   if (q.includes("velocidade") || q.includes("rapido") || q.includes("km/h")) {
     const parts = [
       "🚗 **Velocidade do deslocamento:**",
-      "• **Velocidade média em movimento:** " + formatPtBrNumber(metrics.averageSpeedKmh, 1, 2) + " km/h (calculada considerando segmentos ativos de até 60s).",
+      "• **Velocidade média em movimento:** " + formatPtBrNumber(metrics.averageSpeedKmh, 1, 2) + " km/h (calculada sobre segmentos ativos de deslocamento).",
     ];
     if (metrics.maxReportedSpeedKmh !== undefined) {
       parts.push("• **Maior velocidade instantânea:** " + formatPtBrNumber(metrics.maxReportedSpeedKmh, 1, 2) + " km/h.");
