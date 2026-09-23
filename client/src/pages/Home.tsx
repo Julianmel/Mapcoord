@@ -34,6 +34,7 @@ import {
   timestampToMillis,
   updateCoordInText,
 } from "@/lib/trackLog";
+import { calculateAdaptiveInterval } from "@/lib/adaptiveInterval";
 
 interface ParsedCoord {
   lat: number;
@@ -564,9 +565,10 @@ export default function Home() {
             sequenceCounterRef.current += 1;
             const currentPoint = { lat: item.latitude, lng: item.longitude, timestampMs };
             const segmentMetadata = formatSegmentMetadata(lastRecordedPointRef.current, currentPoint);
+            const pauseSuffix = item.pauseDetected || item.observation?.includes("pausa detectada") ? " - pausa detectada" : "";
             const entry = stationary
-              ? `[${timestamp}] Coleta #${sequenceCounterRef.current} (permanência ${wait}s), ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`
-              : `[${timestamp}] Coleta #${sequenceCounterRef.current} (intervalo ${interval}s), ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`;
+              ? `[${timestamp}] Coleta #${sequenceCounterRef.current} (permanência ${wait}s)${pauseSuffix}, ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`
+              : `[${timestamp}] Coleta #${sequenceCounterRef.current} (intervalo ${interval}s)${pauseSuffix}, ${item.latitude.toFixed(6)},${item.longitude.toFixed(6)}${formatGpsMetadata(item)}${segmentMetadata}`;
             lastRecordedPointRef.current = currentPoint;
             next = appendLogRecord(next, entry);
             importedCount += 1;
@@ -652,7 +654,10 @@ export default function Home() {
 
         sequenceCounterRef.current += 1;
         const pauseSuffix = isPauseDetected ? " - pausa detectada" : "";
-        const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${interval}s)${pauseSuffix}`;
+        const dynamicInterval = effectiveSpeed > 3.0
+          ? calculateAdaptiveInterval(effectiveSpeed, interval)
+          : interval;
+        const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${dynamicInterval}s)${pauseSuffix}`;
         const novaCoord = `[${timestamp}] ${observation}, ${latitude.toFixed(6)},${longitude.toFixed(6)}${formatGpsMetadata({
           speedKmh,
           bearingDegrees: position.coords.heading != null && Number.isFinite(position.coords.heading) ? position.coords.heading : undefined,
@@ -2013,8 +2018,8 @@ export default function Home() {
                   setStatus({
                     type: "success",
                     message: nativeBridge
-                      ? `Captura nativa ativada (a cada ${seconds}s), inclusive em background.`
-                      : `Captura contínua ativada (a cada ${seconds}s). O navegador pode suspender a coleta em background.`,
+                      ? `Captura nativa ativada (frequência adaptativa: ${seconds}s a 8s), inclusive em background.`
+                      : `Captura contínua ativada (frequência adaptativa: ${seconds}s a 8s). O navegador pode suspender a coleta em background.`,
                   });
 
                   if (nativeBridge) {
@@ -2065,8 +2070,11 @@ export default function Home() {
                     }
 
                     sequenceCounterRef.current += 1;
+                    const dynamicInterval = effectiveSpeed > 3.0
+                      ? calculateAdaptiveInterval(effectiveSpeed, captureIntervalRef2.current)
+                      : captureIntervalRef2.current;
                     const pauseSuffix = isPauseDetected ? " - pausa detectada" : "";
-                    const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${captureIntervalRef2.current}s)${pauseSuffix}`;
+                    const observation = `Coleta #${sequenceCounterRef.current} (intervalo ${dynamicInterval}s)${pauseSuffix}`;
                     const novaCoord = `[${timestamp}] ${observation}, ${latitude.toFixed(6)},${longitude.toFixed(6)}${formatGpsMetadata({
                       speedKmh,
                       bearingDegrees: position.coords.heading != null && Number.isFinite(position.coords.heading) ? position.coords.heading : undefined,

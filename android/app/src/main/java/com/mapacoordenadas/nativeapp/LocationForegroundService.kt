@@ -47,6 +47,17 @@ class LocationForegroundService : Service() {
     private var lastStoredRealtimeMs = 0L
     private var consecutiveLowSpeedCount = 0
     private var isIntervalPaused = false
+    private var lastBearingDegrees: Float? = null
+
+    private fun calculateAdaptiveInterval(speedKmh: Double, baseInterval: Int): Int {
+        val base = baseInterval.coerceAtLeast(1)
+        if (speedKmh <= 3.0) return base
+        if (speedKmh <= 12.0) return maxOf(2, base)
+        if (speedKmh <= 25.0) return maxOf(3, Math.round(base * 1.5).toInt())
+        if (speedKmh <= 45.0) return maxOf(4, Math.round(base * 2.0).toInt())
+        if (speedKmh <= 70.0) return maxOf(6, Math.round(base * 3.0).toInt())
+        return maxOf(8, Math.round(base * 4.0).toInt())
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -134,12 +145,13 @@ class LocationForegroundService : Service() {
         }
 
         // 1. Hardware GNSS direto via framework LocationManager (evita throttling de background em tela apagada)
+        val hardwareIntervalMs = if (stationaryWaitMs != null) intervalMs else 1000L
         try {
             rawGpsListener?.let { listener ->
                 if (locationManager?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true) {
                     locationManager?.requestLocationUpdates(
                         LocationManager.GPS_PROVIDER,
-                        intervalMs,
+                        hardwareIntervalMs,
                         0f,
                         listener,
                         Looper.getMainLooper(),
@@ -150,8 +162,8 @@ class LocationForegroundService : Service() {
         } catch (_: Exception) {}
 
         // 2. FusedLocationProviderClient (alta precisão e granularidade fina)
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, intervalMs)
-            .setMinUpdateIntervalMillis((intervalMs / 2).coerceAtLeast(500L))
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, hardwareIntervalMs)
+            .setMinUpdateIntervalMillis(500L)
             .setMaxUpdateDelayMillis(0L)
             .setMinUpdateDistanceMeters(0f)
             .setWaitForAccurateLocation(true)
@@ -192,6 +204,7 @@ class LocationForegroundService : Service() {
         lastStoredRealtimeMs = 0L
         consecutiveLowSpeedCount = 0
         isIntervalPaused = false
+        lastBearingDegrees = null
         try {
             wakeLock?.let {
                 if (it.isHeld) it.release()
@@ -221,13 +234,6 @@ class LocationForegroundService : Service() {
 
     private fun storeLocation(location: Location) {
         val stationaryMode = stationaryWaitMs != null
-        if (!stationaryMode) {
-            val nowRealtime = SystemClock.elapsedRealtime()
-            val minGapMs = (intervalMs * 0.75).toLong().coerceAtLeast(600L)
-            if (lastStoredRealtimeMs > 0L && (nowRealtime - lastStoredRealtimeMs) < minGapMs) {
-                return
-            }
-        }
 
         val latitude = location.latitude
         val longitude = location.longitude
@@ -263,9 +269,8 @@ class LocationForegroundService : Service() {
             consecutiveAnomalies = 0
         }
 
-        lastStoredRealtimeMs = SystemClock.elapsedRealtime()
-
         var recordWithPauseObservation = false
+        var dynamicIntervalSeconds = (intervalMs / 1000L).toInt().coerceAtLeast(1)
         if (!stationaryMode) {
             if (instantSpeedKmh <= 3.0) {
                 if (isIntervalPaused) {
@@ -283,7 +288,31 @@ class LocationForegroundService : Service() {
             } else {
                 consecutiveLowSpeedCount = 0
                 isIntervalPaused = false
+
+                // Frequência inversamente proporcional à velocidade em deslocamento
+                val baseIntervalSeconds = (intervalMs / 1000L).toInt().coerceAtLeast(1)
+                dynamicIntervalSeconds = calculateAdaptiveInterval(instantSpeedKmh, baseIntervalSeconds)
+                val nowRealtime = SystemClock.elapsedRealtime()
+                val elapsedSinceLastMs = if (lastStoredRealtimeMs > 0L) nowRealtime - lastStoredRealtimeMs else Long.MAX_VALUE
+                val minGapMs = (dynamicIntervalSeconds * 1000L * 0.75).toLong().coerceAtLeast(800L)
+
+                // Salvaguarda de curvatura: curva fechada (delta >= 15° e dist >= 15m) ou deslocamento longo (>= 40m)
+                val bearingDelta = if (location.hasBearing() && lastBearingDegrees != null) {
+                    val diff = Math.abs(location.bearing - lastBearingDegrees!!)
+                    if (diff > 180f) 360f - diff else diff
+                } else 0f
+                val isCurvatureBypass = ((bearingDelta >= 15f && segmentDistance >= 15.0) || segmentDistance >= 40.0) && elapsedSinceLastMs >= 1500L
+
+                if (!isCurvatureBypass && elapsedSinceLastMs < minGapMs) {
+                    updateDiagnostics(location, segmentDistance, elapsedSeconds, instantSpeedKmh)
+                    return
+                }
             }
+        }
+
+        lastStoredRealtimeMs = SystemClock.elapsedRealtime()
+        if (location.hasBearing()) {
+            lastBearingDegrees = location.bearing
         }
 
         val current = try { JSONArray(prefs.getString(KEY_PENDING, "[]")) } catch (_: Exception) { JSONArray() }
@@ -300,7 +329,7 @@ class LocationForegroundService : Service() {
             }
             put("gpsTimeMs", currentGpsTime)
             put("timestamp", timestamp)
-            put("intervalSeconds", prefs.getInt(KEY_INTERVAL_SECONDS, (DEFAULT_INTERVAL_MS / 1000L).toInt()))
+            put("intervalSeconds", dynamicIntervalSeconds)
             put("mode", if (stationaryWaitMs != null) "stationary" else "interval")
             put("waitSeconds", stationaryWaitMs?.div(1000L)?.toInt() ?: 0)
             if (recordWithPauseObservation) {
@@ -324,8 +353,14 @@ class LocationForegroundService : Service() {
             .putFloat(KEY_LAST_SEGMENT_DISTANCE_METERS, segmentDistance.toFloat())
             .putFloat(KEY_ELAPSED_SINCE_PREVIOUS_SECONDS, if (elapsedSeconds.isFinite()) elapsedSeconds.toFloat() else 0f)
             .putLong(KEY_STATIONARY_ELAPSED_SECONDS, 0L)
+            .putInt(KEY_INTERVAL_SECONDS, dynamicIntervalSeconds)
             .apply()
-        showStatusNotification("ATIVA — último ponto $timestamp — ${bounded.length()} pendente(s)")
+
+        if (!stationaryMode && instantSpeedKmh > 3.0) {
+            showStatusNotification("ATIVA — %.0f km/h (intervalo %ds) — %s".format(Locale.ROOT, instantSpeedKmh, dynamicIntervalSeconds, timestamp))
+        } else {
+            showStatusNotification("ATIVA — último ponto $timestamp — ${bounded.length()} pendente(s)")
+        }
     }
 
     private fun handleStationaryLocation(location: Location, waitMs: Long) {

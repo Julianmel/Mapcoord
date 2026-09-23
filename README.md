@@ -1,4 +1,4 @@
-# Mapa de Coordenadas (Mapcoord) - v6.3.1
+# Mapa de Coordenadas (Mapcoord) - v6.3.2
 
 Sistema especializado em telemetria cartográfica, captura contínua de coordenadas GPS em campo, visualização espacial técnica, edição interativa de vértices e análise estatística de trajetos.
 
@@ -11,6 +11,7 @@ O projeto é composto por uma **PWA (Progressive Web App)** moderna e responsiva
 ## Sumário
 
 - [Visão Geral](#visão-geral)
+- [Novidades e Recursos da Versão 6.3.2](#novidades-e-recursos-da-versão-632)
 - [Novidades e Recursos da Versão 6.3.1](#novidades-e-recursos-da-versão-631)
 - [Recursos da Versão 6.3](#recursos-da-versão-63)
 - [Recursos da Versão 6.2](#recursos-da-versão-62)
@@ -29,6 +30,23 @@ O projeto é composto por uma **PWA (Progressive Web App)** moderna e responsiva
 - [Instalação e Execução Local](#instalação-e-execução-local)
 - [Compilação e Geração do APK Android](#compilação-e-geração-do-apk-android)
 - [Deploy Automatizado (CI/CD)](#deploy-automatizado-cicd)
+
+---
+
+## Novidades e Recursos da Versão 6.3.2
+
+- **Frequência Inversamente Proporcional à Velocidade em Deslocamento:**
+  - O algoritmo de amostragem contínua agora ajusta a taxa de amostragem de forma dinâmica e inversamente proporcional à velocidade instantânea do veículo:
+    - $\le 3,0\text{ km/h}$: Pausa detectada (gravação de pontos suspensa, evitando deriva de GPS quando parado).
+    - $3,1$ a $12,0\text{ km/h}$: Intervalo de **2 segundos** (frequência alta: 30 pts/min, máxima resolução para manobras, esquinas de quarteirão e caminhada).
+    - $12,1$ a $25,0\text{ km/h}$: Intervalo de **3 segundos** (frequência média-alta: 20 pts/min para tráfego residencial lento).
+    - $25,1$ a $45,0\text{ km/h}$: Intervalo de **4 segundos** (frequência média: 15 pts/min em avenidas).
+    - $45,1$ a $70,0\text{ km/h}$: Intervalo de **6 segundos** (frequência moderada: 10 pts/min em vias arteriais).
+    - $> 70,0\text{ km/h}$: Intervalo de **8 segundos** (frequência reduzida: 7,5 pts/min em velocidade de cruzeiro rodoviário).
+- **Salvaguarda Geométrica de Curvatura:**
+  - Antecipação imediata da leitura quando há deflexão angular de direção ($\Delta\text{azimute} \ge 15^\circ$ e $\ge 15\text{m}$) ou deslocamento acumulado $\ge 40\text{m}$, garantindo fidelidade cartográfica sem corte de curvas em alta velocidade.
+- **Transparência no Log:**
+  - Cada registro gerado inclui no campo `obs` o intervalo dinâmico real aplicado na leitura (`Coleta #N (intervalo Xs)`), tanto no módulo nativo Android quanto na PWA Web.
 
 ---
 
@@ -214,7 +232,7 @@ Mapcoord/
 │   │   ├── components/       # TrackStatisticsModal, MapView, controles UI Radix
 │   │   ├── lib/              # trackLog.ts (parsing e edição), trackAnalysis.ts
 │   │   ├── pages/            # Home.tsx (interface principal de cartografia)
-│   │   └── version.ts        # Versão centralizada do aplicativo (v6.3.1)
+│   │   └── version.ts        # Versão centralizada do aplicativo (v6.3.2)
 │   └── public/               # Manifest PWA, ícones e assets estáticos
 ├── server/                   # Backend de apoio e testes (Vitest + Express)
 │   ├── track-log-helpers.test.ts # Testes unitários de parsing e edição de logs
